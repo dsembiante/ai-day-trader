@@ -88,7 +88,7 @@ class Config(BaseModel):
     groq_retry_delay: float = 2.0  # Seconds between retry attempts
 
     # ── Risk Management ───────────────────────────────────────────────────────
-    max_position_pct: float = 0.02      # Max 2% of portfolio per single position
+    max_position_pct: float = 0.03      # Max 3% of portfolio per single position
     circuit_breaker_pct: float = 0.10   # Hard stop: halt all trading at 10% drawdown
     confidence_threshold: float = 0.75  # Minimum agent confidence score to enter a trade
     max_positions: int = 15             # Maximum concurrent open positions
