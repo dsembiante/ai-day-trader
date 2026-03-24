@@ -14,6 +14,7 @@ numpy
 reportlab
 python-dotenv
 schedule
+psycopg2-binary
 sqlalchemy
 plotly
 requests
