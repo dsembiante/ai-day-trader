@@ -143,11 +143,16 @@ class TradeExecutor:
             side = OrderSide.BUY if decision.trade_type in ['buy'] else OrderSide.SELL
 
             if decision.order_type == 'limit' and decision.entry_price:
-                # Limit bracket order — preferred path for controlled entry
-                # Share qty derived from dollar budget ÷ limit price
+                # Limit bracket order — preferred path for controlled entry.
+                # Alpaca rejects fractional shares on bracket orders, so qty is
+                # floored to the nearest whole share. This slightly undersizes the
+                # position but guarantees the bracket order is accepted.
+                whole_shares = int(decision.position_size_usd / decision.entry_price)
+                if whole_shares < 1:
+                    return {'status': 'skipped', 'reason': 'position too small for 1 whole share'}
                 order_data = LimitOrderRequest(
                     symbol=decision.ticker,
-                    qty=decision.position_size_usd / decision.entry_price,
+                    qty=whole_shares,
                     side=side,
                     time_in_force=TimeInForce.DAY,   # Unfilled limit expires at close
                     limit_price=decision.entry_price,

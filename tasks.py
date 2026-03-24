@@ -23,7 +23,6 @@ Usage:
 """
 
 from crewai import Task
-from models import AgentAnalysis, TradeDecision
 from config import config
 
 
@@ -68,9 +67,10 @@ def create_bull_task(agent, ticker: str, market_data_summary: str) -> Task:
             - intraday:  strong short-term momentum, news catalyst, tight setup
             - swing:     solid multi-day technical setup, moderate conviction
             - position:  strong fundamental thesis, high conviction, longer timeframe
+
+            Be concise — keep reasoning under 3 sentences, key_factors to 2-3 items max.
         ''',
-        expected_output='JSON matching AgentAnalysis schema with bullish perspective',
-        output_json=AgentAnalysis,  # Pydantic validation enforced by CrewAI
+        expected_output='JSON object with ticker, recommendation, confidence, reasoning, key_factors, recommended_hold_period, hold_period_reasoning',
         agent=agent,
     )
 
@@ -105,9 +105,10 @@ def create_bear_task(agent, ticker: str, market_data_summary: str) -> Task:
             - key_factors: list of at least 2 specific risks or bearish factors
             - recommended_hold_period: one of 'intraday', 'swing', 'position'
             - hold_period_reasoning: timeframe of the risk you see
+
+            Be concise — keep reasoning under 3 sentences, key_factors to 2-3 items max.
         ''',
-        expected_output='JSON matching AgentAnalysis schema with bearish perspective',
-        output_json=AgentAnalysis,
+        expected_output='JSON object with ticker, recommendation, confidence, reasoning, key_factors, recommended_hold_period, hold_period_reasoning',
         agent=agent,
     )
 
@@ -164,9 +165,9 @@ def create_risk_manager_task(agent, ticker: str, bull_task: Task, bear_task: Tas
 
             IMPORTANT: Only set execute=true if confidence >= {config.confidence_threshold}.
             When in doubt, do nothing — execute=false is always valid.
+            Be concise — keep all reasoning fields under 2 sentences each.
         ''',
-        expected_output='JSON matching TradeDecision schema',
-        output_json=TradeDecision,
+        expected_output='JSON object with ticker, execute, trade_type, order_type, hold_period, confidence, position_size_usd, entry_price, stop_loss_price, take_profit_price, max_hold_days, bull_reasoning, bear_reasoning, risk_manager_reasoning, hold_period_reasoning',
         agent=agent,
         context=[bull_task, bear_task],  # CrewAI injects both analyst outputs automatically
     )
@@ -211,10 +212,9 @@ def create_portfolio_task(agent, ticker: str, risk_task: Task, open_positions: l
 
             Return the same TradeDecision JSON from context, but set execute=false
             if any of the above conditions are violated. Otherwise pass it through unchanged.
-            Always include your reasoning in risk_manager_reasoning.
+            Always include your reasoning in risk_manager_reasoning. Be concise — 1-2 sentences.
         ''',
         expected_output='JSON matching TradeDecision schema, approved or rejected',
-        output_json=TradeDecision,
         agent=agent,
         context=[risk_task],  # Portfolio manager sees only the risk manager's final decision
     )

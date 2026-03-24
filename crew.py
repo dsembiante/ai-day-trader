@@ -144,10 +144,10 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 Ticker: {ticker}
                 Price: ${market_data.current_price:.2f}
                 Volume: {market_data.volume:,}
-                RSI: {market_data.rsi:.1f if market_data.rsi else 'N/A'}
-                MACD: {market_data.macd:.4f if market_data.macd else 'N/A'}
-                50-day MA: {market_data.moving_avg_50:.2f if market_data.moving_avg_50 else 'N/A'}
-                200-day MA: {market_data.moving_avg_200:.2f if market_data.moving_avg_200 else 'N/A'}
+                RSI: {f'{market_data.rsi:.1f}' if market_data.rsi else 'N/A'}
+                MACD: {f'{market_data.macd:.4f}' if market_data.macd else 'N/A'}
+                50-day MA: {f'{market_data.moving_avg_50:.2f}' if market_data.moving_avg_50 else 'N/A'}
+                200-day MA: {f'{market_data.moving_avg_200:.2f}' if market_data.moving_avg_200 else 'N/A'}
                 Market Regime: {market_regime.upper()}
                 News headlines: {market_data.news_headlines[:5]}
                 Macro context: {market_data.macro_context or 'N/A'}
@@ -177,10 +177,20 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
             # ── Decision Parsing ──────────────────────────────────────────────
             # CrewAI may return output as a parsed dict (json_dict) or as a raw
             # string. Try the structured path first; fall back to JSON parsing.
+            # Strip markdown code fences (```json ... ``` or ``` ... ```) that
+            # the LLM sometimes wraps around its JSON response — json.loads
+            # cannot handle the backtick markers.
             if hasattr(result, 'json_dict') and result.json_dict:
                 decision = TradeDecision(**result.json_dict)
             else:
                 raw = result.raw if hasattr(result, 'raw') else str(result)
+                # Remove markdown code fences if present
+                raw = raw.strip()
+                if raw.startswith('```'):
+                    raw = raw.split('\n', 1)[-1]  # Drop the opening ```[json] line
+                if raw.endswith('```'):
+                    raw = raw.rsplit('```', 1)[0]  # Drop the closing ``` line
+                raw = raw.strip()
                 decision = TradeDecision(**json.loads(raw))
 
             # ── Position Sizing & Execution ───────────────────────────────────

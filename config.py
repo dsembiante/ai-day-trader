@@ -80,7 +80,7 @@ class Config(BaseModel):
     # llama-3.3-70b-versatile provides strong reasoning at low latency via Groq
     groq_model: str = 'llama-3.3-70b-versatile'
     temperature: float = 0.2    # Low temperature for deterministic trading decisions
-    max_tokens: int = 2048      # Sufficient for structured JSON agent outputs
+    max_tokens: int = 1024      # Reduced from 2048 — cuts token usage per agent call ~50%
 
     # ── Groq Retry Policy ─────────────────────────────────────────────────────
     # Rate-limit and transient errors are retried with a fixed delay

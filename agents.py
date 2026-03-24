@@ -24,16 +24,20 @@ from config import config
 
 
 # ── LLM Setup ────────────────────────────────────────────────────────────────
-# CrewAI's native LLM wrapper is used instead of langchain-groq so that
-# model routing, retries, and token accounting are handled by the CrewAI
-# layer rather than a separate LangChain adapter. The groq/ prefix tells
-# CrewAI to route the request through the Groq inference API.
+# Groq exposes an OpenAI-compatible REST API at api.groq.com/openai/v1.
+# CrewAI's native OpenAI provider is used here with base_url overridden to
+# point at Groq — no LiteLLM package required. The model string uses the
+# "openai/" prefix so CrewAI routes through its built-in OpenAI client.
 
 llm = LLM(
-    model=f'groq/{config.groq_model}',  # e.g. groq/llama-3.3-70b-versatile
-    api_key=config.groq_api_key,
-    temperature=config.temperature,     # Low (0.2) for deterministic decisions
-    max_tokens=config.max_tokens,       # 2048 — sufficient for structured JSON output
+    model=config.groq_model,                    # e.g. llama-3.3-70b-versatile
+    provider='openai',                          # Explicit provider bypasses model validation;
+                                                # CrewAI uses its native OpenAI client routed
+                                                # to Groq's OpenAI-compatible endpoint.
+    base_url='https://api.groq.com/openai/v1',  # Groq's OpenAI-compatible REST endpoint
+    api_key=config.groq_api_key,               # Groq key — passed directly, no env var needed
+    temperature=config.temperature,             # Low (0.2) for deterministic decisions
+    max_tokens=config.max_tokens,               # 2048 — sufficient for structured JSON
 )
 
 
