@@ -19,37 +19,22 @@ Usage:
     from agents import create_risk_manager, create_portfolio_manager
 """
 
-from crewai import Agent
-from langchain_groq import ChatGroq
+from crewai import Agent, LLM
 from config import config
 
 
 # ── LLM Setup ────────────────────────────────────────────────────────────────
+# CrewAI's native LLM wrapper is used instead of langchain-groq so that
+# model routing, retries, and token accounting are handled by the CrewAI
+# layer rather than a separate LangChain adapter. The groq/ prefix tells
+# CrewAI to route the request through the Groq inference API.
 
-def create_llm_with_retry() -> ChatGroq:
-    """
-    Initialise the Groq LLM client with retry settings from config.
-
-    Retry behaviour (max_retries, retry_delay) is handled by the LangChain
-    ChatGroq wrapper rather than implemented manually, so transient rate-limits
-    and network blips are recovered transparently without crashing the crew.
-
-    Returns:
-        A configured ChatGroq instance ready for agent assignment.
-    """
-    from langchain_groq import ChatGroq
-    return ChatGroq(
-        model=config.groq_model,            # e.g. llama-3.3-70b-versatile
-        api_key=config.groq_api_key,
-        temperature=config.temperature,     # Low (0.2) for deterministic decisions
-        max_tokens=config.max_tokens,       # 2048 — sufficient for structured JSON output
-        max_retries=config.groq_max_retries,
-    )
-
-
-# Shared LLM instance — created once at module load and reused across all agents
-# to avoid redundant client initialisation on every scheduler cycle.
-llm = create_llm_with_retry()
+llm = LLM(
+    model=f'groq/{config.groq_model}',  # e.g. groq/llama-3.3-70b-versatile
+    api_key=config.groq_api_key,
+    temperature=config.temperature,     # Low (0.2) for deterministic decisions
+    max_tokens=config.max_tokens,       # 2048 — sufficient for structured JSON output
+)
 
 
 # ── Agent Factories ───────────────────────────────────────────────────────────
