@@ -4,7 +4,6 @@ groq
 langchain-groq
 pydantic
 streamlit
-alpaca-py
 finnhub-python
 yfinance
 fredapi

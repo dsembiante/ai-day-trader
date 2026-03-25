@@ -51,22 +51,24 @@ def create_bull_task(agent, ticker: str, market_data_summary: str) -> Task:
     """
     return Task(
         description=f'''
-            Analyze {ticker} from a BULLISH perspective using this market data:
+            Analyze {ticker} from a BULLISH INTRADAY perspective using this market data:
             {market_data_summary}
+
+            You are looking for same-day long opportunities only. Focus on:
+            - Short-term price momentum building in the last 1-3 candles
+            - Volume spikes indicating institutional buying interest
+            - Intraday technical signals: breakouts above VWAP, HOD, or key intraday levels
+            - RSI momentum divergence on short timeframes
+            - News catalysts or sector rotation driving intraday moves
 
             You MUST return a JSON object with these exact fields:
             - ticker: '{ticker}'
             - recommendation: one of 'buy', 'sell', 'short', 'cover'
             - confidence: float between 0.0 and 1.0
             - reasoning: your full analysis (minimum 50 characters)
-            - key_factors: list of at least 2 specific factors supporting your view
-            - recommended_hold_period: one of 'intraday', 'swing', 'position'
-            - hold_period_reasoning: why you chose this hold period
-
-            For hold period guidance:
-            - intraday:  strong short-term momentum, news catalyst, tight setup
-            - swing:     solid multi-day technical setup, moderate conviction
-            - position:  strong fundamental thesis, high conviction, longer timeframe
+            - key_factors: list of at least 2 specific intraday factors supporting your view
+            - recommended_hold_period: always 'intraday' for this task
+            - hold_period_reasoning: why the intraday setup is valid right now
 
             Be concise — keep reasoning under 3 sentences, key_factors to 2-3 items max.
         ''',
@@ -94,17 +96,24 @@ def create_bear_task(agent, ticker: str, market_data_summary: str) -> Task:
     """
     return Task(
         description=f'''
-            Analyze {ticker} from a BEARISH perspective using this market data:
+            Analyze {ticker} from a BEARISH INTRADAY perspective using this market data:
             {market_data_summary}
+
+            You are looking for same-day short opportunities and intraday reversal risks. Focus on:
+            - Intraday breakdown signals: price losing VWAP, LOD breaks, or failed breakouts
+            - Volume distribution (high volume selling, low volume bounces)
+            - Momentum exhaustion: RSI overbought on short timeframes, bearish divergence
+            - Intraday resistance levels where shorts have conviction
+            - News-driven selling pressure or sector weakness within the session
 
             You MUST return a JSON object with these exact fields:
             - ticker: '{ticker}'
             - recommendation: one of 'buy', 'sell', 'short', 'cover'
             - confidence: float between 0.0 and 1.0
             - reasoning: your full risk analysis (minimum 50 characters)
-            - key_factors: list of at least 2 specific risks or bearish factors
-            - recommended_hold_period: one of 'intraday', 'swing', 'position'
-            - hold_period_reasoning: timeframe of the risk you see
+            - key_factors: list of at least 2 specific intraday risks or bearish signals
+            - recommended_hold_period: always 'intraday' for this task
+            - hold_period_reasoning: why the bearish intraday setup is valid right now
 
             Be concise — keep reasoning under 3 sentences, key_factors to 2-3 items max.
         ''',
@@ -163,7 +172,9 @@ def create_risk_manager_task(agent, ticker: str, bull_task: Task, bear_task: Tas
             - risk_manager_reasoning: your final decision reasoning (minimum 50 chars)
             - hold_period_reasoning: why you chose this hold period
 
-            IMPORTANT: Only set execute=true if confidence >= {config.confidence_threshold}.
+            IMPORTANT: This is a DAY TRADING system. Always set hold_period to 'intraday'
+            and max_hold_days to 1. All positions must be closed before market close.
+            Only set execute=true if confidence >= {config.confidence_threshold}.
             When in doubt, do nothing — execute=false is always valid.
             Be concise — keep all reasoning fields under 2 sentences each.
         ''',

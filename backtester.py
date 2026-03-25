@@ -23,9 +23,7 @@ Or from another module:
     results = Backtester().run(days=180)
 """
 
-from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest
-from alpaca.data.timeframe import TimeFrame
+import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
 from datetime import datetime, timedelta
@@ -42,10 +40,7 @@ class Backtester:
     """
 
     def __init__(self):
-        # Historical data client — read-only, no trading permissions needed
-        self.client = StockHistoricalDataClient(
-            config.alpaca_api_key, config.alpaca_secret_key
-        )
+        pass
 
     # ── Data Fetching ─────────────────────────────────────────────────────────
 
@@ -69,12 +64,13 @@ class Backtester:
             Empty DataFrame on API error.
         """
         try:
-            bars = self.client.get_stock_bars(StockBarsRequest(
-                symbol_or_symbols=ticker,
-                timeframe=TimeFrame.Day,
-                start=datetime.now() - timedelta(days=days),
-            ))
-            df = bars.df.reset_index()
+            start = datetime.now() - timedelta(days=days)
+            df = yf.download(ticker, start=start, progress=False, auto_adjust=True)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0).str.lower()
+            else:
+                df.columns = [c.lower() for c in df.columns]
+            df = df.reset_index().rename(columns={'Date': 'timestamp', 'date': 'timestamp'})
 
             # Compute indicators in-place using pandas-ta
             df.ta.rsi(append=True)

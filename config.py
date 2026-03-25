@@ -30,11 +30,13 @@ class TradingMode(str, Enum):
 class RunMode(str, Enum):
     """
     Determines the scheduling strategy for the trading loop.
-    - fixed_6x:       Runs at 6 fixed intervals throughout the trading day.
-    - intraday_30min: Runs every 30 minutes during market hours.
+    - fixed_6x:        Runs at 6 fixed intervals throughout the trading day.
+    - intraday_30min:  Runs every 30 minutes during market hours.
+    - intraday_10min:  Runs every 10 minutes during market hours (day trading).
     """
     FIXED_6X = 'fixed_6x'
     INTRADAY_30MIN = 'intraday_30min'
+    INTRADAY_10MIN = 'intraday_10min'
 
 
 class HoldPeriod(str, Enum):
@@ -68,7 +70,7 @@ class Config(BaseModel):
 
     # ── Run Mode ──────────────────────────────────────────────────────────────
     # Controls how the scheduler fires agent cycles during market hours
-    run_mode: RunMode = RunMode(os.getenv('RUN_MODE', 'fixed_6x'))
+    run_mode: RunMode = RunMode(os.getenv('RUN_MODE', 'intraday_10min'))
 
     # ── External Data Sources ─────────────────────────────────────────────────
     finnhub_api_key: str = os.getenv('FINNHUB_API_KEY', '')  # Real-time quotes & news
@@ -91,12 +93,12 @@ class Config(BaseModel):
     # than 3 intraday round-trips in a 5-day rolling window. Keep False until
     # the account is consistently above $25,000 to avoid PDT violations.
     # Set True only when account balance is reliably above $25,000.
-    allow_intraday: bool = False
+    allow_intraday: bool = True
 
     # ── Risk Management ───────────────────────────────────────────────────────
-    max_position_pct: float = 0.03      # Max 3% of portfolio per single position
+    max_position_pct: float = 0.02      # Max 2% of portfolio per single position
     circuit_breaker_pct: float = 0.10   # Hard stop: halt all trading at 10% drawdown
-    confidence_threshold: float = 0.75  # Minimum agent confidence score to enter a trade
+    confidence_threshold: float = 0.80  # Minimum agent confidence score to enter a trade
     max_positions: int = 15             # Maximum concurrent open positions
 
     # ── Hold Period Exit Rules ────────────────────────────────────────────────
@@ -109,8 +111,8 @@ class Config(BaseModel):
     intraday_max_days: int = 1
 
     # Swing — short-term momentum; wider stops to absorb normal daily volatility
-    swing_stop_loss_pct: float = 0.04
-    swing_take_profit_pct: float = 0.15
+    swing_stop_loss_pct: float = 0.015
+    swing_take_profit_pct: float = 0.025
     swing_max_days: int = 5
 
     # Position — trend-following; widest stops to stay in strong moves
@@ -122,23 +124,9 @@ class Config(BaseModel):
     # Symbols scanned on every agent cycle. Mix of mega-cap tech, financials,
     # and broad market ETFs for diversified signal generation.
     watchlist: list = [
-        'AMZN', 'JPM', 'MS', 'BAC', 'GS',
-        'SPY', 'QQQ', 'AAPL', 'V', 'IWM',
-        'WMT', 'XOM', 'NEE', 'MCD', 'AWK',
-        'GOOGL', 'KO'                          # Defensive stocks
+        'AMZN', 'QQQ', 'IWM', 'AAPL', 'SPY',
+        'MS', 'NEE', 'WMT', 'BAC', 'JPM'                                                                                                # Defensive stocks
     ]
-    
-    # watchlist: list = [
-    #     'JNJ', 'PG', 'KO', 'MCD', 'NEE',
-    #     'ED', 'SO', 'WEC', 'DUK', 'AWK'                  # ETFs / market proxies
-    # ]
-
-    #    watchlist: list = [
-    #     'AMZN', 'TSLA', 'NVDA', 'JPM', 'MS',
-    #     'BAC', 'GS', 'AMD', 'SPY', 'QQQ',
-    #     'AAPL', 'V', 'IWM', 'GOOGL',
-    #     'UBER', 'PFE', 'WMT', 'XOM'                   # ETFs / market proxies
-    # ]
 
     # ── File Paths ────────────────────────────────────────────────────────────
     # Relative to the project root; directories are created at startup if missing

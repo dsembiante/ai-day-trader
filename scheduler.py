@@ -6,9 +6,11 @@ loop according to the RUN_MODE set in .env:
 
     fixed_6x:        6 scheduled cycles per day at fixed market times.
     intraday_30min:  Every 30 minutes from 9:30 AM to 3:30 PM.
+    intraday_10min:  Every 10 minutes from 9:30 AM to 3:50 PM (day trading).
 
-Both modes share the same 3:45 PM pre-close run (intraday position flush)
-and 4:00 PM end-of-day report generation.
+All modes share a pre-close intraday position flush and 4:00 PM end-of-day
+report generation. intraday_10min flushes at 3:50 PM instead of 3:45 PM
+to maximize trading time while still closing before market close.
 
 The CircuitBreaker is instantiated at module level so its high-water mark
 state persists across all cycles within the same process lifetime without
@@ -152,6 +154,25 @@ elif config.run_mode == RunMode.INTRADAY_30MIN:
 
     # Pre-close flush and EOD report run identically in both modes
     schedule.every().day.at('15:45').do(pre_close_run)
+    schedule.every().day.at('16:00').do(end_of_day)
+
+elif config.run_mode == RunMode.INTRADAY_10MIN:
+    # Fire every 10 minutes from 9:30 AM to 3:50 PM for active day trading.
+    # Last regular cycle is 3:50 PM; force-close fires immediately after.
+    print('Starting in 10-MINUTE INTRADAY mode')
+    for hour in range(9, 16):
+        for minute in range(0, 60, 10):
+            # Skip slots before 9:30 AM market open
+            if hour == 9 and minute < 30:
+                continue
+            # Stop regular cycles at 3:50 PM — pre_close_run owns that slot
+            if hour == 15 and minute >= 50:
+                continue
+            time_str = f'{hour:02d}:{minute:02d}'
+            schedule.every().day.at(time_str).do(run_cycle)
+
+    # 3:50 PM — final cycle + force-close all intraday positions
+    schedule.every().day.at('15:50').do(pre_close_run)
     schedule.every().day.at('16:00').do(end_of_day)
 
 

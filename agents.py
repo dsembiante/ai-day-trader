@@ -55,19 +55,19 @@ def create_bull_agent() -> Agent:
     timeframe recommendation to evaluate — not just a directional view.
     """
     return Agent(
-        role='Bull Market Analyst',
+        role='Intraday Momentum Analyst',
         goal=(
-            'Identify compelling buying opportunities. For each recommendation '
-            'specify whether this is an intraday, swing, or position trade '
-            'based on signal strength and timeframe.'
+            'Identify intraday long opportunities driven by momentum, volume spikes, '
+            'and short-term technical breakouts. All recommendations are same-day trades.'
         ),
         backstory=(
-            'You are an optimistic equity analyst who looks for catalysts, '
-            'momentum, and favorable setups. You classify each opportunity '
-            'by how long the thesis should play out.'
+            'You are an intraday momentum specialist with a tape-reading background. '
+            'You focus exclusively on same-day price action — volume surges, VWAP reclaims, '
+            'breakouts from intraday consolidation, and news-driven momentum. '
+            'You never hold overnight and size into high-conviction setups with tight stops.'
         ),
         llm=llm,
-        verbose=True,  # Surfaces reasoning chain in logs for auditability
+        verbose=True,
     )
 
 
@@ -80,15 +80,17 @@ def create_bear_agent() -> Agent:
     against the bull agent's output.
     """
     return Agent(
-        role='Bear Market Analyst',
+        role='Intraday Short Specialist',
         goal=(
-            'Identify risks and short opportunities. Specify the timeframe '
-            'of each risk — is this an intraday concern, multi-day deterioration, '
-            'or longer-term structural issue?'
+            'Identify intraday short opportunities and same-day reversal setups. '
+            'Focus on breakdown signals, volume distribution, and momentum exhaustion '
+            'that play out within the current trading session.'
         ),
         backstory=(
-            'You are a risk-focused analyst who specializes in identifying '
-            'overvalued stocks and downside scenarios across all timeframes.'
+            'You are an intraday short-selling specialist. You look for stocks losing '
+            'key intraday levels like VWAP and LOD, failed breakouts with high-volume '
+            'rejection, and RSI exhaustion on short timeframes. '
+            'You only trade same-day setups and cut losses immediately when wrong.'
         ),
         llm=llm,
         verbose=True,
@@ -106,17 +108,18 @@ def create_risk_manager() -> Agent:
     - Enforce the 0.75 confidence threshold as a hard gate before approving execution
     """
     return Agent(
-        role='Risk Manager',
+        role='Intraday Risk Manager',
         goal=(
-            'Evaluate bull and bear arguments, classify the final hold period '
-            '(intraday/swing/position), and make the trade decision with strict '
-            'risk management. Only approve trades with confidence above 0.75.'
+            'Evaluate intraday bull and bear arguments and make the final same-day '
+            'trade decision. Enforce tight stops, quick exits, and never allow '
+            f'positions to carry overnight. Only approve trades with confidence above {config.confidence_threshold}.'
         ),
         backstory=(
-            'You are a senior risk manager. You determine the appropriate '
-            'holding period based on signal quality: strong short-term signals '
-            'become intraday trades, solid multi-day setups become swing trades, '
-            'and high-conviction fundamental plays become position trades.'
+            'You are a senior intraday risk manager specializing in day trading discipline. '
+            'All trades you approve are intraday only — hold_period is always intraday, '
+            'max_hold_days is always 1. You enforce tight stop losses (1.5%) and quick '
+            'take profits (2.5%) to lock in gains before momentum fades. '
+            'You cut losing trades fast and never let a winner turn into a loser.'
         ),
         llm=llm,
         verbose=True,
