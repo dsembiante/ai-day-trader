@@ -6,7 +6,7 @@ pydantic
 streamlit
 alpaca-py
 finnhub-python
-alpha-vantage
+yfinance
 fredapi
 pandas
 pandas-ta

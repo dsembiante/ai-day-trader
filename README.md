@@ -172,10 +172,9 @@ All services below have free tiers sufficient to run this project in paper tradi
 - Your API key is displayed on the dashboard immediately after registration
 - Free tier provides news headlines; sentiment scoring requires a paid plan (optional)
 
-### Alpha Vantage — Company Fundamentals
-- Sign up at [alphavantage.co](https://www.alphavantage.co/support/#api-key)
-- Free API key is emailed instantly
-- Free tier is limited to 25 requests/day — the system caches responses daily to stay within this limit
+### yfinance — Technical Indicators & Fundamentals
+- No API key required — yfinance fetches data from Yahoo Finance publicly
+- Provides RSI, MACD, moving averages, P/E ratio, EPS, revenue growth, earnings dates, and analyst recommendations
 
 ### FRED — Macro Economic Data
 - Sign up at [fred.stlouisfed.org](https://fredaccount.stlouisfed.org/login/secure/)
@@ -227,7 +226,6 @@ ALPACA_BASE_URL=https://paper-api.alpaca.markets
 
 # Data Sources
 FINNHUB_API_KEY=your_key
-ALPHA_VANTAGE_API_KEY=your_key
 FRED_API_KEY=your_key
 
 # LLM
@@ -406,7 +404,7 @@ Forced liquidation during a drawdown event can lock in losses that would otherwi
 | `groq` | Base Groq SDK |
 | `alpaca-py` | Market data and order execution |
 | `finnhub-python` | News headlines |
-| `alpha-vantage` | Company fundamentals |
+| `yfinance` | Technical indicators & company fundamentals |
 | `fredapi` | Macro economic data |
 | `pandas` + `pandas-ta` | OHLCV processing and technical indicators |
 | `pydantic` | Data validation and schema enforcement |

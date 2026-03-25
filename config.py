@@ -71,10 +71,9 @@ class Config(BaseModel):
     run_mode: RunMode = RunMode(os.getenv('RUN_MODE', 'fixed_6x'))
 
     # ── External Data Sources ─────────────────────────────────────────────────
-    finnhub_api_key: str = os.getenv('FINNHUB_API_KEY', '')         # Real-time quotes & news
-    alpha_vantage_key: str = os.getenv('ALPHA_VANTAGE_API_KEY', '') # Technical indicators & OHLCV
-    fred_api_key: str = os.getenv('FRED_API_KEY', '')               # Macro economic data
-    groq_api_key: str = os.getenv('GROQ_API_KEY', '')               # LLM inference
+    finnhub_api_key: str = os.getenv('FINNHUB_API_KEY', '')  # Real-time quotes & news
+    fred_api_key: str = os.getenv('FRED_API_KEY', '')        # Macro economic data
+    groq_api_key: str = os.getenv('GROQ_API_KEY', '')        # LLM inference
 
     # ── LLM Settings ──────────────────────────────────────────────────────────
     # llama-3.3-70b-versatile provides strong reasoning at low latency via Groq

@@ -168,7 +168,7 @@ def alert_api_failure(source: str, error: str):
     prevent false-alarm concern from the operator.
 
     Args:
-        source: Name of the failed data source (e.g. 'finnhub', 'alpha_vantage').
+        source: Name of the failed data source (e.g. 'finnhub', 'yfinance').
         error:  Exception message or description of the failure condition.
     """
     subject = f'⚠️ API Failure: {source}'

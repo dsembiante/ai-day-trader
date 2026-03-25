@@ -46,11 +46,11 @@ class DataSourceStatus(BaseModel):
     data_collector.py degrades gracefully when sources are down and records the
     outage here so downstream agents know which signals may be missing.
     """
-    alpaca: bool = True         # Real-time price & account data
-    finnhub: bool = True        # News sentiment & alternative data
-    alpha_vantage: bool = True  # OHLCV history & technical indicators
-    fred: bool = True           # Macro economic series
-    groq: bool = True           # LLM inference availability
+    alpaca: bool = True    # Real-time price & account data
+    finnhub: bool = True   # News sentiment & alternative data
+    yfinance: bool = True  # Technical indicators & fundamentals
+    fred: bool = True      # Macro economic series
+    groq: bool = True      # LLM inference availability
 
 
 # ── Market Data ───────────────────────────────────────────────────────────────
@@ -66,11 +66,19 @@ class MarketData(BaseModel):
     current_price: float
     volume: int
 
-    # Technical indicators — None when alpha_vantage is unreachable
+    # Technical indicators — None when yfinance is unreachable
     rsi: Optional[float] = None             # Relative Strength Index (0–100)
     macd: Optional[float] = None            # MACD histogram value
     moving_avg_50: Optional[float] = None   # 50-day SMA
     moving_avg_200: Optional[float] = None  # 200-day SMA (golden/death cross ref)
+
+    # Fundamentals — None when yfinance is unreachable
+    pe_ratio: Optional[float] = None              # Trailing P/E ratio
+    forward_pe: Optional[float] = None            # Forward P/E ratio
+    revenue_growth: Optional[float] = None        # YoY revenue growth (decimal, e.g. 0.12 = 12%)
+    eps: Optional[float] = None                   # Trailing earnings per share
+    next_earnings_date: Optional[str] = None      # ISO date of next earnings report
+    analyst_recommendation: Optional[str] = None  # 'buy', 'hold', 'sell', etc.
 
     # Sentiment — None when finnhub is unreachable
     news_sentiment: Optional[float] = None  # Normalised score: -1.0 (bearish) to 1.0 (bullish)

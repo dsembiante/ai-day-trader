@@ -148,6 +148,12 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 MACD: {f'{market_data.macd:.4f}' if market_data.macd else 'N/A'}
                 50-day MA: {f'{market_data.moving_avg_50:.2f}' if market_data.moving_avg_50 else 'N/A'}
                 200-day MA: {f'{market_data.moving_avg_200:.2f}' if market_data.moving_avg_200 else 'N/A'}
+                P/E Ratio: {f'{market_data.pe_ratio:.1f}' if market_data.pe_ratio else 'N/A'}
+                Forward P/E: {f'{market_data.forward_pe:.1f}' if market_data.forward_pe else 'N/A'}
+                EPS: {f'${market_data.eps:.2f}' if market_data.eps else 'N/A'}
+                Revenue Growth: {f'{market_data.revenue_growth*100:.1f}%' if market_data.revenue_growth else 'N/A'}
+                Next Earnings: {market_data.next_earnings_date or 'N/A'}
+                Analyst Recommendation: {market_data.analyst_recommendation or 'N/A'}
                 Market Regime: {market_regime.upper()}
                 News headlines: {market_data.news_headlines[:5]}
                 Macro context: {market_data.macro_context or 'N/A'}

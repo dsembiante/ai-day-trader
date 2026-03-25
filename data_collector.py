@@ -7,9 +7,11 @@ recorded in DataSourceStatus and logged via logger.py; downstream agents
 receive the best available data and adjust their confidence accordingly.
 
 Sources:
-    1. Alpaca      — OHLCV bars + locally-computed technical indicators
-    2. Finnhub     — Recent news headlines + company sentiment score
-    3. Alpha Vantage — Company fundamentals (cached daily to stay within 25 call/day limit)
+    1. Alpaca      — Current price and volume
+    2. yfinance    — Technical indicators (RSI, MACD, MA50, MA200) and
+                     fundamentals (P/E, forward P/E, EPS, revenue growth,
+                     next earnings date, analyst recommendation)
+    3. Finnhub     — Recent news headlines + company sentiment score
     4. FRED        — Macro series: Fed Funds Rate + trailing CPI inflation
 
 Usage:
@@ -18,9 +20,10 @@ Usage:
 """
 
 import finnhub
+import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
-import requests, json, os
+import json, os
 from datetime import datetime, timedelta
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
@@ -38,7 +41,7 @@ class DataCollector:
     """
 
     def __init__(self):
-        # Alpaca historical client — used for OHLCV bar data only (not order placement)
+        # Alpaca historical client — used for current price and volume
         self.alpaca = StockHistoricalDataClient(
             config.alpaca_api_key, config.alpaca_secret_key)
 
@@ -59,54 +62,81 @@ class DataCollector:
         Fields are None when their source was unavailable — agents must handle
         this via reduced-signal analysis rather than raising exceptions.
         """
-        # Track which sources succeeded; passed to agents for confidence weighting
         status = DataSourceStatus()
 
-        # Initialise all fields to None so we can safely return partials on failure
         price = volume = rsi = macd = ma50 = ma200 = None
+        pe_ratio = forward_pe = revenue_growth = eps = None
+        next_earnings_date = analyst_recommendation = None
         news_sentiment = None
         headlines = []
         macro_context = None
 
-        # ── 1. Alpaca — Price & Technical Indicators ──────────────────────────
-        # Pull 250 days of daily bars to have enough history for SMA-200.
-        # Technical indicators are computed locally with pandas-ta to avoid
-        # additional API calls and rate-limit pressure.
+        # ── 1. Alpaca — Current Price & Volume ────────────────────────────────
         try:
             bars = self.alpaca.get_stock_bars(StockBarsRequest(
                 symbol_or_symbols=ticker,
                 timeframe=TimeFrame.Day,
-                start=datetime.now() - timedelta(days=300)
+                start=datetime.now() - timedelta(days=5)
             ))
             df = bars.df.reset_index()
-
-            # Latest close and volume for position sizing and display
             price = float(df['close'].iloc[-1])
             volume = int(df['volume'].iloc[-1])
-
-            # Compute indicators in-place — pandas-ta appends columns to df
-            df.ta.rsi(append=True)
-            df.ta.macd(append=True)
-            df['SMA_50'] = df['close'].rolling(50).mean()
-            df['SMA_200'] = df['close'].rolling(200).mean()
-
-            # Guard with column existence check — indicator may be NaN if
-            # fewer bars than the lookback period were returned
-            rsi = float(df['RSI_14'].iloc[-1]) if 'RSI_14' in df else None
-            macd = float(df['MACD_12_26_9'].iloc[-1]) if 'MACD_12_26_9' in df else None
-            ma50 = float(df['SMA_50'].iloc[-1])
-            ma200 = float(df['SMA_200'].iloc[-1])
 
         except Exception as e:
             status.alpaca = False
             log_error('alpaca', ticker, str(e))
 
-        # ── 2. Finnhub — News Headlines & Sentiment ───────────────────────────
-        # Split into two separate try blocks so a 403 on news_sentiment
-        # (paid-tier endpoint) does not abort the headlines fetch (free tier).
-        # Headlines are available on the Finnhub free plan; sentiment is not.
+        # ── 2. yfinance — Technicals & Fundamentals ───────────────────────────
+        # Pull 1 year of daily history for indicator calculation.
+        # Fundamentals come from yf.Ticker.info — no separate API key required.
+        try:
+            yf_ticker = yf.Ticker(ticker)
 
-        # 2a. Headlines — free tier, should succeed with any valid API key
+            # ── Technical indicators ──────────────────────────────────────────
+            hist = yf_ticker.history(period='1y')
+            if not hist.empty:
+                close = hist['Close']
+
+                rsi_series = ta.rsi(close, length=14)
+                if rsi_series is not None and not rsi_series.empty:
+                    val = rsi_series.iloc[-1]
+                    rsi = float(val) if not pd.isna(val) else None
+
+                macd_df = ta.macd(close)
+                if macd_df is not None and 'MACD_12_26_9' in macd_df.columns:
+                    val = macd_df['MACD_12_26_9'].iloc[-1]
+                    macd = float(val) if not pd.isna(val) else None
+
+                ma50_series = close.rolling(50).mean()
+                ma200_series = close.rolling(200).mean()
+                val50 = ma50_series.iloc[-1]
+                val200 = ma200_series.iloc[-1]
+                ma50 = float(val50) if not pd.isna(val50) else None
+                ma200 = float(val200) if not pd.isna(val200) else None
+
+            # ── Fundamentals ──────────────────────────────────────────────────
+            info = yf_ticker.info
+            pe_ratio             = info.get('trailingPE', None)
+            forward_pe           = info.get('forwardPE', None)
+            revenue_growth       = info.get('revenueGrowth', None)   # decimal e.g. 0.12
+            eps                  = info.get('trailingEps', None)
+            analyst_recommendation = info.get('recommendationKey', None)  # 'buy','hold','sell'
+
+            # ── Next earnings date ────────────────────────────────────────────
+            try:
+                cal = yf_ticker.calendar
+                if isinstance(cal, dict) and 'Earnings Date' in cal:
+                    dates = cal['Earnings Date']
+                    if dates:
+                        next_earnings_date = str(dates[0].date())
+            except Exception:
+                pass  # Earnings date is best-effort
+
+        except Exception as e:
+            status.yfinance = False
+            log_error('yfinance', ticker, str(e))
+
+        # ── 3. Finnhub — News Headlines & Sentiment ───────────────────────────
         try:
             news = self.finnhub.company_news(
                 ticker,
@@ -119,60 +149,25 @@ class DataCollector:
             status.finnhub = False
             log_error('finnhub_news', ticker, str(e))
 
-        # 2b. Sentiment score — requires Finnhub paid plan; degrades gracefully
-        # to None if unavailable. news_sentiment stays None on free tier.
         try:
             sd = self.finnhub.news_sentiment(ticker)
-            # companyNewsScore: -1.0 (very bearish) to 1.0 (very bullish)
             news_sentiment = sd.get('companyNewsScore', None)
         except Exception as e:
-            # 403 on free tier is expected — log at debug level only
             log_error('finnhub_sentiment', ticker, str(e))
 
-        # ── 3. Alpha Vantage — Company Fundamentals ───────────────────────────
-        # Alpha Vantage free tier is capped at 25 requests/day across all tickers.
-        # We mitigate this with a date-keyed per-ticker cache so each symbol is
-        # fetched at most once per calendar day regardless of how many cycles run.
-        try:
-            cache_file = (
-                f"{config.cache_dir}/{ticker}_av_{datetime.now().strftime('%Y%m%d')}.json"
-            )
-            if os.path.exists(cache_file):
-                # Serve from disk cache — no API call consumed
-                with open(cache_file) as f:
-                    av_data = json.load(f)
-            else:
-                url = (
-                    f'https://www.alphavantage.co/query'
-                    f'?function=OVERVIEW&symbol={ticker}&apikey={config.alpha_vantage_key}'
-                )
-                av_data = requests.get(url, timeout=10).json()
-                # Persist to cache immediately after a successful fetch
-                with open(cache_file, 'w') as f:
-                    json.dump(av_data, f)
-
-        except Exception as e:
-            status.alpha_vantage = False
-            log_error('alpha_vantage', ticker, str(e))
-
         # ── 4. FRED — Macro Economic Context ─────────────────────────────────
-        # Macro data is shared across all tickers in a cycle so it is cached
-        # in a single date-keyed file rather than per-ticker. FEDFUNDS and
-        # CPIAUCSL are the two primary macro signals used in agent prompts.
         try:
             macro_cache = f"{config.cache_dir}/macro_{datetime.now().strftime('%Y%m%d')}.json"
             if os.path.exists(macro_cache):
                 with open(macro_cache) as f:
                     macro = json.load(f)
             else:
-                fed_rate = self.fred.get_series('FEDFUNDS').iloc[-1]
-                # Year-over-year % change in CPI as a proxy for trailing inflation
+                fed_rate  = self.fred.get_series('FEDFUNDS').iloc[-1]
                 inflation = self.fred.get_series('CPIAUCSL').pct_change(12, fill_method=None).iloc[-1] * 100
                 macro = {'fed_rate': float(fed_rate), 'inflation': float(inflation)}
                 with open(macro_cache, 'w') as f:
                     json.dump(macro, f)
 
-            # Format as a single string — injected verbatim into agent prompts
             macro_context = (
                 f"Fed Rate: {macro['fed_rate']:.2f}%, "
                 f"Inflation: {macro['inflation']:.2f}%"
@@ -183,8 +178,6 @@ class DataCollector:
             log_error('fred', ticker, str(e))
 
         # ── Assemble & Return ─────────────────────────────────────────────────
-        # price/volume fall back to 0.0/0 so the model is always constructable;
-        # agents must check DataSourceStatus.alpaca before trusting these values.
         return MarketData(
             ticker=ticker,
             current_price=price or 0.0,
@@ -193,6 +186,12 @@ class DataCollector:
             macd=macd,
             moving_avg_50=ma50,
             moving_avg_200=ma200,
+            pe_ratio=pe_ratio,
+            forward_pe=forward_pe,
+            revenue_growth=revenue_growth,
+            eps=eps,
+            next_earnings_date=next_earnings_date,
+            analyst_recommendation=analyst_recommendation,
             news_sentiment=news_sentiment,
             news_headlines=headlines,
             macro_context=macro_context,
@@ -207,10 +206,6 @@ class DataCollector:
             Bull:     Price > SMA-50 > SMA-200 — uptrend confirmed on both timeframes
             Bear:     Price < SMA-50 < SMA-200 — downtrend confirmed on both timeframes
             Sideways: Neither condition met — mixed or transitioning market
-
-        Called once per cycle in crew.py before the per-ticker loop so all agents
-        operate with the same regime context. Defaults to 'sideways' on failure
-        to err on the side of caution rather than assuming a bull market.
 
         Returns:
             'bull', 'bear', or 'sideways'
@@ -229,7 +224,6 @@ class DataCollector:
             sma_50        = float(df['SMA_50'].iloc[-1])
             sma_200       = float(df['SMA_200'].iloc[-1])
 
-            # Golden cross = bull market; death cross = bear market
             if current_price > sma_50 and sma_50 > sma_200:
                 return 'bull'
             elif current_price < sma_50 and sma_50 < sma_200:
@@ -239,4 +233,4 @@ class DataCollector:
 
         except Exception as e:
             log_error('market_regime', 'SPY', str(e))
-            return 'sideways'  # Cautious default if detection fails
+            return 'sideways'
