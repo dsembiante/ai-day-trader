@@ -54,23 +54,35 @@ def create_bull_task(agent, ticker: str, market_data_summary: str) -> Task:
             Analyze {ticker} from a BULLISH INTRADAY perspective using this market data:
             {market_data_summary}
 
-            You are looking for same-day long opportunities only. Focus on:
-            - Short-term price momentum building in the last 1-3 candles
-            - Volume spikes indicating institutional buying interest
-            - Intraday technical signals: breakouts above VWAP, HOD, or key intraday levels
-            - RSI momentum divergence on short timeframes
-            - News catalysts or sector rotation driving intraday moves
+            You are looking for same-day long opportunities with MULTI-SIGNAL CONFLUENCE.
+            Evaluate each of these four bullish signals and count how many are present:
+
+            Signal 1 — VWAP (primary):
+            - Price above VWAP = BULLISH ✓  |  Price below VWAP = NOT bullish ✗
+
+            Signal 2 — Opening Range Breakout:
+            - ORB breakout up = True = BULLISH ✓  |  No breakout = NOT bullish ✗
+
+            Signal 3 — Pre-market gap:
+            - Gap % above +0.5% = BULLISH ✓  |  Gap below +0.5% = NOT bullish ✗
+
+            Signal 4 — Volume confirmation:
+            - Volume ratio above 1.20x = BULLISH ✓  |  Below 1.20x = NOT bullish ✗
+
+            Count how many of the 4 signals are bullish (0–4).
+            IMPORTANT: Only recommend 'buy' if at least 2 signals are bullish.
+            If fewer than 2 signals are bullish, recommend 'sell' (no trade) with low confidence.
 
             You MUST return a JSON object with these exact fields:
             - ticker: '{ticker}'
             - recommendation: one of 'buy', 'sell', 'short', 'cover'
             - confidence: float between 0.0 and 1.0
-            - reasoning: your full analysis (minimum 50 characters)
-            - key_factors: list of at least 2 specific intraday factors supporting your view
+            - reasoning: your full analysis including the signal count (minimum 50 characters)
+            - key_factors: list the bullish signals that fired AND the signal count e.g. "2/4 bullish signals"
             - recommended_hold_period: always 'intraday' for this task
             - hold_period_reasoning: why the intraday setup is valid right now
 
-            Be concise — keep reasoning under 3 sentences, key_factors to 2-3 items max.
+            Be concise — keep reasoning under 3 sentences, key_factors to 2-4 items.
         ''',
         expected_output='JSON object with ticker, recommendation, confidence, reasoning, key_factors, recommended_hold_period, hold_period_reasoning',
         agent=agent,
@@ -99,23 +111,35 @@ def create_bear_task(agent, ticker: str, market_data_summary: str) -> Task:
             Analyze {ticker} from a BEARISH INTRADAY perspective using this market data:
             {market_data_summary}
 
-            You are looking for same-day short opportunities and intraday reversal risks. Focus on:
-            - Intraday breakdown signals: price losing VWAP, LOD breaks, or failed breakouts
-            - Volume distribution (high volume selling, low volume bounces)
-            - Momentum exhaustion: RSI overbought on short timeframes, bearish divergence
-            - Intraday resistance levels where shorts have conviction
-            - News-driven selling pressure or sector weakness within the session
+            You are looking for same-day short opportunities with MULTI-SIGNAL CONFLUENCE.
+            Evaluate each of these four bearish signals and count how many are present:
+
+            Signal 1 — VWAP (primary):
+            - Price below VWAP = BEARISH ✓  |  Price above VWAP = NOT bearish ✗
+
+            Signal 2 — Opening Range Breakdown:
+            - ORB breakdown = True = BEARISH ✓  |  No breakdown = NOT bearish ✗
+
+            Signal 3 — Pre-market gap:
+            - Gap % below -0.5% = BEARISH ✓  |  Gap above -0.5% = NOT bearish ✗
+
+            Signal 4 — Volume on down move:
+            - Volume ratio above 1.20x while price is declining = BEARISH ✓  |  Low volume = NOT bearish ✗
+
+            Count how many of the 4 signals are bearish (0–4).
+            IMPORTANT: Only recommend 'short' if at least 2 signals are bearish.
+            If fewer than 2 signals are bearish, recommend 'buy' (no short trade) with low confidence.
 
             You MUST return a JSON object with these exact fields:
             - ticker: '{ticker}'
             - recommendation: one of 'buy', 'sell', 'short', 'cover'
             - confidence: float between 0.0 and 1.0
-            - reasoning: your full risk analysis (minimum 50 characters)
-            - key_factors: list of at least 2 specific intraday risks or bearish signals
+            - reasoning: your full risk analysis including the signal count (minimum 50 characters)
+            - key_factors: list the bearish signals that fired AND the signal count e.g. "2/4 bearish signals"
             - recommended_hold_period: always 'intraday' for this task
             - hold_period_reasoning: why the bearish intraday setup is valid right now
 
-            Be concise — keep reasoning under 3 sentences, key_factors to 2-3 items max.
+            Be concise — keep reasoning under 3 sentences, key_factors to 2-4 items.
         ''',
         expected_output='JSON object with ticker, recommendation, confidence, reasoning, key_factors, recommended_hold_period, hold_period_reasoning',
         agent=agent,
@@ -172,10 +196,17 @@ def create_risk_manager_task(agent, ticker: str, bull_task: Task, bear_task: Tas
             - risk_manager_reasoning: your final decision reasoning (minimum 50 chars)
             - hold_period_reasoning: why you chose this hold period
 
-            IMPORTANT: This is a DAY TRADING system. Always set hold_period to 'intraday'
-            and max_hold_days to 1. All positions must be closed before market close.
-            Only set execute=true if confidence >= {config.confidence_threshold}.
-            When in doubt, do nothing — execute=false is always valid.
+            STRICT INTRADAY RULES — this is a DAY TRADING system:
+            - hold_period MUST always be 'intraday'
+            - max_hold_days MUST always be 1
+            - All positions are force-closed at end of day — no overnight holds ever
+            - Do NOT approve any trade before 10:00 AM EST — the opening range must fully form first
+            - Only approve a trade if the analyst identified at least 2 confirming signals (look for "X/4 signals" in key_factors)
+            - If only 1 signal is present, set confidence below {config.confidence_threshold} so the trade does not execute
+            - Only set execute=true if confidence >= {config.confidence_threshold}
+            - Favor HIGH confidence trades only — intraday has no time to recover from bad entries
+            - When bull and bear signals conflict, prefer execute=false over a low-conviction trade
+            - When in doubt, do nothing — execute=false is always the safe choice
             Be concise — keep all reasoning fields under 2 sentences each.
         ''',
         expected_output='JSON object with ticker, execute, trade_type, order_type, hold_period, confidence, position_size_usd, entry_price, stop_loss_price, take_profit_price, max_hold_days, bull_reasoning, bear_reasoning, risk_manager_reasoning, hold_period_reasoning',
@@ -216,11 +247,14 @@ def create_portfolio_task(agent, ticker: str, risk_task: Task, open_positions: l
             Open tickers: {[p['ticker'] for p in open_positions]}
 
             Review the risk manager decision from context.
-            If execute=true, verify:
+            If execute=true, verify ALL of the following:
             1. We have not exceeded max positions ({config.max_positions})
             2. We do not already have an open position in {ticker}
             3. Adding this position does not over-concentrate in one sector
+            4. Multi-signal confirmation: the analyst reasoning mentions at least 2 confirming signals
+               (look for "2/4", "3/4", or "4/4" in key_factors — if only "1/4" is present, set execute=false)
 
+            If condition 4 fails, set execute=false and note "insufficient signal confirmation" in risk_manager_reasoning.
             Return the same TradeDecision JSON from context, but set execute=false
             if any of the above conditions are violated. Otherwise pass it through unchanged.
             Always include your reasoning in risk_manager_reasoning. Be concise — 1-2 sentences.

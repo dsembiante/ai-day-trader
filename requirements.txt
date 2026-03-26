@@ -1,3 +1,4 @@
+alpaca-py
 crewai
 crewai-tools
 groq

@@ -33,10 +33,12 @@ class RunMode(str, Enum):
     - fixed_6x:        Runs at 6 fixed intervals throughout the trading day.
     - intraday_30min:  Runs every 30 minutes during market hours.
     - intraday_10min:  Runs every 10 minutes during market hours (day trading).
+    - intraday_smart:  5min at open/close, 15min mid-day (default day trading mode).
     """
     FIXED_6X = 'fixed_6x'
     INTRADAY_30MIN = 'intraday_30min'
     INTRADAY_10MIN = 'intraday_10min'
+    INTRADAY_SMART = 'intraday_smart'
 
 
 class HoldPeriod(str, Enum):
@@ -70,7 +72,7 @@ class Config(BaseModel):
 
     # ── Run Mode ──────────────────────────────────────────────────────────────
     # Controls how the scheduler fires agent cycles during market hours
-    run_mode: RunMode = RunMode(os.getenv('RUN_MODE', 'intraday_10min'))
+    run_mode: RunMode = RunMode(os.getenv('RUN_MODE', 'intraday_smart'))
 
     # ── External Data Sources ─────────────────────────────────────────────────
     finnhub_api_key: str = os.getenv('FINNHUB_API_KEY', '')  # Real-time quotes & news
@@ -96,10 +98,11 @@ class Config(BaseModel):
     allow_intraday: bool = True
 
     # ── Risk Management ───────────────────────────────────────────────────────
-    max_position_pct: float = 0.02      # Max 2% of portfolio per single position
+    max_position_pct: float = 0.05      # Max 5% of portfolio per single position
     circuit_breaker_pct: float = 0.10   # Hard stop: halt all trading at 10% drawdown
-    confidence_threshold: float = 0.80  # Minimum agent confidence score to enter a trade
+    confidence_threshold: float = 0.82  # Minimum agent confidence score to enter a trade
     max_positions: int = 15             # Maximum concurrent open positions
+    min_signals_required: int = 2       # Minimum agreeing signals before executing a trade
 
     # ── Hold Period Exit Rules ────────────────────────────────────────────────
     # Each hold period tier has independent stop-loss, take-profit, and time limits.
@@ -124,8 +127,7 @@ class Config(BaseModel):
     # Symbols scanned on every agent cycle. Mix of mega-cap tech, financials,
     # and broad market ETFs for diversified signal generation.
     watchlist: list = [
-        'AMZN', 'QQQ', 'IWM', 'AAPL', 'SPY',
-        'MS', 'NEE', 'WMT', 'BAC', 'JPM'                                                                                                # Defensive stocks
+        'XOM', 'WMT', 'ED', 'DUK', 'MCD', 'IWM', 'SPY'
     ]
 
     # ── File Paths ────────────────────────────────────────────────────────────

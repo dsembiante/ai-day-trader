@@ -61,10 +61,16 @@ def create_bull_agent() -> Agent:
             'and short-term technical breakouts. All recommendations are same-day trades.'
         ),
         backstory=(
-            'You are an intraday momentum specialist with a tape-reading background. '
-            'You focus exclusively on same-day price action — volume surges, VWAP reclaims, '
-            'breakouts from intraday consolidation, and news-driven momentum. '
-            'You never hold overnight and size into high-conviction setups with tight stops.'
+            'You are an intraday momentum specialist who only enters trades with confluence '
+            'of multiple confirming signals — you never trade on a single signal alone. '
+            'Your four-signal checklist: (1) price above VWAP confirms intraday uptrend, '
+            '(2) opening range breakout above the 9:30–10:00 AM high confirms bullish momentum, '
+            '(3) positive pre-market gap above +0.5% adds directional bias from overnight buyers, '
+            '(4) volume ratio above 1.20x confirms institutional participation. '
+            'You require at least 2 of these 4 signals before recommending a buy. '
+            'You specialize in two windows: the first hour after the opening range forms '
+            '(10:00–11:00 AM) and the final hour before close (2:30–3:50 PM). '
+            'You never hold overnight and always report your signal count in key_factors.'
         ),
         llm=llm,
         verbose=True,
@@ -87,10 +93,17 @@ def create_bear_agent() -> Agent:
             'that play out within the current trading session.'
         ),
         backstory=(
-            'You are an intraday short-selling specialist. You look for stocks losing '
-            'key intraday levels like VWAP and LOD, failed breakouts with high-volume '
-            'rejection, and RSI exhaustion on short timeframes. '
-            'You only trade same-day setups and cut losses immediately when wrong.'
+            'You are an intraday short-selling specialist who identifies high-probability '
+            'short setups using the same multi-signal discipline as your bull counterpart — '
+            'you never short on a single signal alone. '
+            'Your four-signal bearish checklist: (1) price below VWAP confirms intraday '
+            'downtrend, (2) opening range breakdown below the 9:30–10:00 AM low confirms '
+            'bearish momentum, (3) negative pre-market gap below -0.5% shows overnight '
+            'selling pressure, (4) volume ratio above 1.20x on a declining stock confirms '
+            'institutional distribution. '
+            'You require at least 2 of these 4 signals before recommending a short. '
+            'You cut losses immediately when the short thesis is invalidated, never carry '
+            'positions overnight, and always report your bearish signal count in key_factors.'
         ),
         llm=llm,
         verbose=True,
@@ -115,11 +128,17 @@ def create_risk_manager() -> Agent:
             f'positions to carry overnight. Only approve trades with confidence above {config.confidence_threshold}.'
         ),
         backstory=(
-            'You are a senior intraday risk manager specializing in day trading discipline. '
-            'All trades you approve are intraday only — hold_period is always intraday, '
-            'max_hold_days is always 1. You enforce tight stop losses (1.5%) and quick '
-            'take profits (2.5%) to lock in gains before momentum fades. '
-            'You cut losing trades fast and never let a winner turn into a loser.'
+            'You are a senior intraday risk specialist who enforces the two-signal minimum '
+            'rule as your first and most important gate — if the analyst identified fewer '
+            'than 2 confirming signals (shown as X/4 in key_factors), you reject the trade '
+            'immediately regardless of other factors. '
+            'Every trade you approve has hold_period=intraday and max_hold_days=1 with no '
+            'exceptions. You set tight stop losses appropriate for intraday moves (1.5%) '
+            'and size all positions for same-day closure with a hard force-close at '
+            '3:50 PM EST. You do not approve trades before 10:00 AM EST — the opening '
+            'range must fully form before any position is entered. '
+            'When signals conflict or conviction is low, you sit out. '
+            'Capital preservation is your primary objective.'
         ),
         llm=llm,
         verbose=True,
@@ -138,12 +157,21 @@ def create_portfolio_manager() -> Agent:
     return Agent(
         role='Portfolio Manager',
         goal=(
-            'Ensure portfolio balance across positions and hold periods. '
-            'Avoid over-concentration in any single hold period category.'
+            'Oversee intraday portfolio exposure — enforce the 5-position cap, '
+            'verify multi-signal confirmation on every trade, and ensure total '
+            'intraday risk stays within acceptable limits.'
         ),
         backstory=(
-            'You manage overall portfolio health and ensure a balanced mix '
-            'of intraday, swing, and position trades.'
+            'You are an intraday portfolio overseer responsible for keeping the '
+            'day trading book disciplined and within risk limits. '
+            'You enforce a hard cap of 5 simultaneous intraday positions — beyond '
+            'that, no new trades are approved regardless of signal quality. '
+            'Before approving any trade, you check that the risk manager confirmed '
+            'multi-signal backing (at least 2/4 signals). If the reasoning only '
+            'mentions a single signal type, you flag it as insufficient confirmation '
+            'and set execute=false. You monitor overall intraday exposure and ensure '
+            'the portfolio is not over-concentrated in correlated positions '
+            '(e.g. multiple tech names moving together).'
         ),
         llm=llm,
         verbose=True,

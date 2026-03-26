@@ -70,6 +70,11 @@ class DataCollector:
         news_sentiment = None
         headlines = []
         macro_context = None
+        vwap = price_above_vwap = atr_pct = None
+        opening_range_high = opening_range_low = None
+        orb_breakout_up = orb_breakout_down = None
+        gap_pct = gap_is_bullish = gap_is_bearish = None
+        volume_ratio = volume_confirmed = None
 
         # ── 1. Alpaca — Current Price & Volume ────────────────────────────────
         try:
@@ -177,11 +182,20 @@ class DataCollector:
             status.fred = False
             log_error('fred', ticker, str(e))
 
+        # ── 5. Intraday Indicators ────────────────────────────────────────────
+        current_price = price or 0.0
+        current_volume = volume or 0
+        vwap, price_above_vwap                               = self.get_vwap(ticker)
+        opening_range_high, opening_range_low, _, orb_breakout_up, orb_breakout_down = self.get_opening_range(ticker)
+        gap_pct, gap_is_bullish, gap_is_bearish              = self.get_premarket_gap(ticker)
+        volume_ratio, volume_confirmed                       = self.get_volume_confirmation(ticker)
+        atr_pct                                              = self.get_atr(ticker, current_price)
+
         # ── Assemble & Return ─────────────────────────────────────────────────
         return MarketData(
             ticker=ticker,
-            current_price=price or 0.0,
-            volume=volume or 0,
+            current_price=current_price,
+            volume=current_volume,
             rsi=rsi,
             macd=macd,
             moving_avg_50=ma50,
@@ -195,8 +209,131 @@ class DataCollector:
             news_sentiment=news_sentiment,
             news_headlines=headlines,
             macro_context=macro_context,
+            vwap=vwap,
+            price_above_vwap=price_above_vwap,
+            atr_pct=atr_pct,
+            opening_range_high=opening_range_high,
+            opening_range_low=opening_range_low,
+            orb_breakout_up=orb_breakout_up,
+            orb_breakout_down=orb_breakout_down,
+            gap_pct=gap_pct,
+            gap_is_bullish=gap_is_bullish,
+            gap_is_bearish=gap_is_bearish,
+            volume_ratio=volume_ratio,
+            volume_confirmed=volume_confirmed,
             data_sources_used=status,
         )
+
+    def get_vwap(self, ticker: str) -> tuple:
+        """
+        Calculate today's VWAP from 1-minute intraday bars using close * volume.
+        Returns (vwap, price_above_vwap) or (None, None) on failure.
+        """
+        try:
+            df = yf.Ticker(ticker).history(period='1d', interval='1m')
+            if df.empty:
+                return None, None
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            vwap_series = (df['Close'] * df['Volume']).cumsum() / df['Volume'].cumsum()
+            vwap_val = float(vwap_series.iloc[-1])
+            current_price = float(df['Close'].iloc[-1])
+            return vwap_val, current_price > vwap_val
+        except Exception as e:
+            log_error('vwap', ticker, str(e))
+            return None, None
+
+    def get_opening_range(self, ticker: str) -> tuple:
+        """
+        Calculate the opening range (9:30–10:00 AM EST) from 1-minute bars.
+        Returns (orh, orl, orm, orb_breakout_up, orb_breakout_down) or all Nones.
+        """
+        try:
+            df = yf.Ticker(ticker).history(period='1d', interval='1m')
+            if df.empty:
+                return None, None, None, None, None
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            # Ensure index is timezone-aware in EST
+            if df.index.tz is None:
+                df.index = df.index.tz_localize('UTC').tz_convert('America/New_York')
+            else:
+                df.index = df.index.tz_convert('America/New_York')
+            open_bars = df.between_time('09:30', '09:59')
+            if open_bars.empty:
+                return None, None, None, None, None
+            orh = float(open_bars['High'].max())
+            orl = float(open_bars['Low'].min())
+            orm = (orh + orl) / 2
+            current_price = float(df['Close'].iloc[-1])
+            return orh, orl, orm, current_price > orh, current_price < orl
+        except Exception as e:
+            log_error('opening_range', ticker, str(e))
+            return None, None, None, None, None
+
+    def get_premarket_gap(self, ticker: str) -> tuple:
+        """
+        Calculate pre-market gap using fast_info (last_price vs previous_close).
+        Returns (gap_pct, gap_is_bullish, gap_is_bearish) or (None, None, None).
+        """
+        try:
+            fi = yf.Ticker(ticker).fast_info
+            last_price = fi.last_price
+            prev_close = fi.previous_close
+            if not last_price or not prev_close or prev_close == 0:
+                return None, None, None
+            gap_pct = float((last_price - prev_close) / prev_close * 100)
+            return gap_pct, gap_pct > 0.5, gap_pct < -0.5
+        except Exception as e:
+            log_error('premarket_gap', ticker, str(e))
+            return None, None, None
+
+    def get_volume_confirmation(self, ticker: str) -> tuple:
+        """
+        Compare today's volume against the 20-day average.
+        Returns (volume_ratio, volume_confirmed) or (None, None).
+        volume_confirmed is True when volume_ratio > 1.20.
+        """
+        try:
+            df = yf.Ticker(ticker).history(period='25d', interval='1d')
+            if df.empty or len(df) < 21:
+                return None, None
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            avg_volume = float(df['Volume'].iloc[-21:-1].mean())  # 20-day avg, excluding today
+            today_volume = float(df['Volume'].iloc[-1])
+            if avg_volume == 0:
+                return None, None
+            volume_ratio = today_volume / avg_volume
+            return float(volume_ratio), volume_ratio > 1.20
+        except Exception as e:
+            log_error('volume_confirmation', ticker, str(e))
+            return None, None
+
+    def get_atr(self, ticker: str, current_price: float) -> 'Optional[float]':
+        """
+        Calculate 14-day Average True Range as a percentage of current price.
+        ATR% = ATR / current_price * 100
+        """
+        try:
+            df = yf.download(ticker, period='30d', interval='1d', progress=False, auto_adjust=True)
+            if df.empty or len(df) < 15:
+                return None
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            prev_close = df['Close'].shift(1)
+            tr = pd.concat([
+                df['High'] - df['Low'],
+                (df['High'] - prev_close).abs(),
+                (df['Low'] - prev_close).abs(),
+            ], axis=1).max(axis=1)
+            atr = tr.rolling(14).mean().iloc[-1]
+            if pd.isna(atr) or current_price == 0:
+                return None
+            return float(atr / current_price * 100)
+        except Exception as e:
+            log_error('atr', ticker, str(e))
+            return None
 
     def get_market_regime(self) -> str:
         """

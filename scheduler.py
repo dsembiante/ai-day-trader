@@ -6,11 +6,13 @@ loop according to the RUN_MODE set in .env:
 
     fixed_6x:        6 scheduled cycles per day at fixed market times.
     intraday_30min:  Every 30 minutes from 9:30 AM to 3:30 PM.
-    intraday_10min:  Every 10 minutes from 9:30 AM to 3:50 PM (day trading).
+    intraday_10min:  5min open/close windows, 15min mid-day (9:30 AM–3:50 PM).
+    intraday_smart:  ORB-aware schedule — skips 9:30–10:00 AM to let the opening
+                     range form, then 5min from 10:00–11:00 AM, 15min from
+                     11:00 AM–2:30 PM, and 5min from 2:30–3:50 PM. (default)
 
-All modes share a pre-close intraday position flush and 4:00 PM end-of-day
-report generation. intraday_10min flushes at 3:50 PM instead of 3:45 PM
-to maximize trading time while still closing before market close.
+All modes force-close all intraday positions at 3:50 PM and generate an
+end-of-day PDF report at 4:00 PM.
 
 The CircuitBreaker is instantiated at module level so its high-water mark
 state persists across all cycles within the same process lifetime without
@@ -157,19 +159,61 @@ elif config.run_mode == RunMode.INTRADAY_30MIN:
     schedule.every().day.at('16:00').do(end_of_day)
 
 elif config.run_mode == RunMode.INTRADAY_10MIN:
-    # Fire every 10 minutes from 9:30 AM to 3:50 PM for active day trading.
-    # Last regular cycle is 3:50 PM; force-close fires immediately after.
-    print('Starting in 10-MINUTE INTRADAY mode')
-    for hour in range(9, 16):
-        for minute in range(0, 60, 10):
-            # Skip slots before 9:30 AM market open
-            if hour == 9 and minute < 30:
-                continue
-            # Stop regular cycles at 3:50 PM — pre_close_run owns that slot
-            if hour == 15 and minute >= 50:
-                continue
-            time_str = f'{hour:02d}:{minute:02d}'
-            schedule.every().day.at(time_str).do(run_cycle)
+    # Smart intraday schedule — high frequency at open and close, reduced mid-day:
+    #   9:30 AM – 10:30 AM : every 5 minutes  (volatile open window)
+    #   10:30 AM – 3:00 PM : every 15 minutes (quieter mid-day)
+    #   3:00 PM – 3:50 PM  : every 5 minutes  (pre-close momentum window)
+    #   3:50 PM            : force-close all intraday positions
+    print('Starting in SMART INTRADAY mode (5min open/close, 15min mid-day)')
+
+    # 9:30 AM – 10:25 AM every 5 minutes
+    for minute in range(30, 60, 5):
+        schedule.every().day.at(f'09:{minute:02d}').do(run_cycle)
+    for minute in range(0, 26, 5):
+        schedule.every().day.at(f'10:{minute:02d}').do(run_cycle)
+
+    # 10:30 AM – 2:45 PM every 15 minutes
+    for hour in range(10, 15):
+        for minute in range(0, 60, 15):
+            if hour == 10 and minute < 30:
+                continue  # Already covered by the 5-min open block above
+            if hour == 14 and minute > 45:
+                continue  # 3:00 PM block takes over
+            schedule.every().day.at(f'{hour:02d}:{minute:02d}').do(run_cycle)
+
+    # 3:00 PM – 3:45 PM every 5 minutes
+    for minute in range(0, 46, 5):
+        schedule.every().day.at(f'15:{minute:02d}').do(run_cycle)
+
+    # 3:50 PM — final cycle + force-close all intraday positions
+    schedule.every().day.at('15:50').do(pre_close_run)
+    schedule.every().day.at('16:00').do(end_of_day)
+
+elif config.run_mode == RunMode.INTRADAY_SMART:
+    # ORB-aware schedule — skips the opening range formation window entirely:
+    #   9:30 AM – 10:00 AM : NO trading (wait for opening range to form)
+    #   10:00 AM – 11:00 AM: every 5 minutes  (first hour after ORB confirmation)
+    #   11:00 AM – 2:30 PM : every 15 minutes (quiet mid-day)
+    #   2:30 PM – 3:50 PM  : every 5 minutes  (closing volatility window)
+    #   3:50 PM            : force-close all intraday positions
+    print('Starting in SMART INTRADAY mode (ORB-aware: skip 9:30-10:00, 5min/15min/5min)')
+
+    # 10:00 AM – 10:55 AM every 5 minutes
+    for minute in range(0, 60, 5):
+        schedule.every().day.at(f'10:{minute:02d}').do(run_cycle)
+
+    # 11:00 AM – 2:15 PM every 15 minutes
+    for hour in range(11, 15):
+        for minute in range(0, 60, 15):
+            if hour == 14 and minute > 15:
+                continue  # 2:30 PM block takes over at 14:30
+            schedule.every().day.at(f'{hour:02d}:{minute:02d}').do(run_cycle)
+
+    # 2:30 PM – 3:45 PM every 5 minutes
+    for minute in range(30, 60, 5):
+        schedule.every().day.at(f'14:{minute:02d}').do(run_cycle)
+    for minute in range(0, 46, 5):
+        schedule.every().day.at(f'15:{minute:02d}').do(run_cycle)
 
     # 3:50 PM — final cycle + force-close all intraday positions
     schedule.every().day.at('15:50').do(pre_close_run)

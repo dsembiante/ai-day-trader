@@ -144,6 +144,27 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 Ticker: {ticker}
                 Price: ${market_data.current_price:.2f}
                 Volume: {market_data.volume:,}
+
+                VWAP Analysis:
+                VWAP: {f'${market_data.vwap:.2f}' if market_data.vwap else 'N/A'}
+                Price above VWAP: {market_data.price_above_vwap if market_data.price_above_vwap is not None else 'N/A'}
+
+                Opening Range Breakout:
+                Opening range high: {f'${market_data.opening_range_high:.2f}' if market_data.opening_range_high else 'N/A'}
+                Opening range low: {f'${market_data.opening_range_low:.2f}' if market_data.opening_range_low else 'N/A'}
+                ORB breakout up: {market_data.orb_breakout_up if market_data.orb_breakout_up is not None else 'N/A'}
+                ORB breakdown: {market_data.orb_breakout_down if market_data.orb_breakout_down is not None else 'N/A'}
+
+                Gap Analysis:
+                Pre-market gap: {f'{market_data.gap_pct:.2f}%' if market_data.gap_pct is not None else 'N/A'}
+                Bullish gap: {market_data.gap_is_bullish if market_data.gap_is_bullish is not None else 'N/A'}
+                Bearish gap: {market_data.gap_is_bearish if market_data.gap_is_bearish is not None else 'N/A'}
+
+                Volume:
+                Volume ratio vs 20-day avg: {f'{market_data.volume_ratio:.2f}x' if market_data.volume_ratio else 'N/A'}
+                Volume confirmed: {market_data.volume_confirmed if market_data.volume_confirmed is not None else 'N/A'}
+
+                ATR%: {f'{market_data.atr_pct:.2f}%' if market_data.atr_pct else 'N/A'}
                 RSI: {f'{market_data.rsi:.1f}' if market_data.rsi else 'N/A'}
                 MACD: {f'{market_data.macd:.4f}' if market_data.macd else 'N/A'}
                 50-day MA: {f'{market_data.moving_avg_50:.2f}' if market_data.moving_avg_50 else 'N/A'}

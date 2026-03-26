@@ -72,6 +72,26 @@ class MarketData(BaseModel):
     moving_avg_50: Optional[float] = None   # 50-day SMA
     moving_avg_200: Optional[float] = None  # 200-day SMA (golden/death cross ref)
 
+    # Intraday indicators — None when yfinance intraday data is unavailable
+    vwap: Optional[float] = None                # Today's VWAP (close * volume weighted)
+    price_above_vwap: Optional[bool] = None     # True if current price > VWAP
+    atr_pct: Optional[float] = None             # 14-day ATR as % of current price
+
+    # Opening range breakout (9:30–10:00 AM EST)
+    opening_range_high: Optional[float] = None  # High of first 30-min candle range
+    opening_range_low: Optional[float] = None   # Low of first 30-min candle range
+    orb_breakout_up: Optional[bool] = None      # True if price broke above opening range high
+    orb_breakout_down: Optional[bool] = None    # True if price broke below opening range low
+
+    # Pre-market gap (via fast_info)
+    gap_pct: Optional[float] = None             # (last_price - prev_close) / prev_close * 100
+    gap_is_bullish: Optional[bool] = None       # True if gap_pct > 0.5%
+    gap_is_bearish: Optional[bool] = None       # True if gap_pct < -0.5%
+
+    # Volume confirmation vs 20-day average
+    volume_ratio: Optional[float] = None        # today_volume / avg_20day_volume
+    volume_confirmed: Optional[bool] = None     # True if volume_ratio > 1.20
+
     # Fundamentals — None when yfinance is unreachable
     pe_ratio: Optional[float] = None              # Trailing P/E ratio
     forward_pe: Optional[float] = None            # Forward P/E ratio
