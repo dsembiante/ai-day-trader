@@ -94,6 +94,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     # Snapshot of open positions after any expired ones have been closed.
     # Passed to the portfolio task to enforce max_positions and duplicate checks.
     open_positions = executor.get_open_positions()
+    alpaca_held_tickers = {p['ticker'] for p in open_positions}
     trades_executed = 0
 
     # ── Market Regime Detection ───────────────────────────────────────────────
@@ -124,6 +125,12 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     # ── Per-Ticker Loop ───────────────────────────────────────────────────────
     for ticker in config.watchlist:
         try:
+            # Skip tickers already held in Alpaca — avoids yfinance/Finnhub calls
+            # on positions we cannot add to anyway. Critical at 42 cycles/day.
+            if ticker in alpaca_held_tickers:
+                print(f'⏩ {ticker} — already held in Alpaca, skipping')
+                continue
+
             print(f'\n📊 Analyzing {ticker}...')
 
             # ── Data Collection ───────────────────────────────────────────────
