@@ -106,12 +106,12 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
 
     if market_regime == 'bear':
         print('🐻 Bear market detected — reducing position sizes and favoring shorts')
-        config.max_position_pct = 0.01   # Half normal size in bear market
+        config.max_position_pct = 0.05   # 5% per trade in bear market (~$1,500 on $30k)
     elif market_regime == 'sideways':
         print('➡️  Sideways market — being selective')
-        config.max_position_pct = 0.015  # Slightly reduced
+        config.max_position_pct = 0.07   # 7% per trade in sideways market (~$2,100 on $30k)
     else:
-        config.max_position_pct = 0.02   # Full size in confirmed bull market
+        config.max_position_pct = 0.10   # 10% per trade in bull market (~$3,000 on $30k)
 
     # ── Agent Instantiation ───────────────────────────────────────────────────
     # Agents are created once per cycle (not per ticker) and reused.
