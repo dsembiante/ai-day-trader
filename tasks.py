@@ -207,6 +207,15 @@ def create_risk_manager_task(agent, ticker: str, bull_task: Task, bear_task: Tas
             - Favor HIGH confidence trades only — intraday has no time to recover from bad entries
             - When bull and bear signals conflict, prefer execute=false over a low-conviction trade
             - When in doubt, do nothing — execute=false is always the safe choice
+
+            DATA QUALITY GUIDANCE — evaluate these conditions before setting your confidence score:
+            - If alpaca is False in data_sources_available: this ticker should have been skipped upstream — set execute=false.
+            - If yfinance is False in data_sources_available: you are missing all technical indicators and fundamentals. Unless price action and news provide extremely compelling signals, set confidence below 0.78 or execute=false.
+            - If finnhub is False in data_sources_available: this is expected on the current Finnhub plan — do NOT penalize confidence for missing Finnhub data. Proceed normally with available signals.
+            - If finnhub is True AND news_sentiment is negative (below -0.3): treat this as a meaningful bearish signal and weight it in your confidence score.
+            - If fred is False in data_sources_available: you are missing macro context. Apply extra caution on interest-rate-sensitive stocks such as utilities, REITs, and consumer staples.
+            - If 2 or more sources other than finnhub show False in data_sources_available: set execute=false — insufficient data to make a reliable decision.
+
             Be concise — keep all reasoning fields under 2 sentences each.
         ''',
         expected_output='JSON object with ticker, execute, trade_type, order_type, hold_period, confidence, position_size_usd, entry_price, stop_loss_price, take_profit_price, max_hold_days, bull_reasoning, bear_reasoning, risk_manager_reasoning, hold_period_reasoning',
