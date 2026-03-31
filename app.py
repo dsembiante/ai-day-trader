@@ -40,11 +40,11 @@ db = Database()
 
 # ── Page Config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title='AI Trading Agent',
+    page_title='AI Day Trader',
     page_icon='📈',
     layout='wide',  # Wide layout maximises chart real estate
 )
-st.title('📈 AI Trading Agent Dashboard')
+st.title('📈 AI Day Trader Dashboard')
 
 
 # ── Tab Layout ────────────────────────────────────────────────────────────────

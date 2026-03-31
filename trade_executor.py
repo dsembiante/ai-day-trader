@@ -210,6 +210,31 @@ class TradeExecutor:
         except Exception as e:
             log_error('close_position', ticker, str(e))
 
+    def get_filled_exit_price(self, ticker: str) -> float | None:
+        """
+        Return the average fill price of the most recent closed order for ticker.
+
+        Queries the last 10 orders for the symbol and returns the filled_avg_price
+        of the most recent filled order. Returns None if no filled order is found.
+
+        Args:
+            ticker: Symbol to look up.
+
+        Returns:
+            Fill price as a float, or None if unavailable.
+        """
+        try:
+            from alpaca.trading.requests import GetOrdersRequest
+            from alpaca.trading.enums import QueryOrderStatus
+            req = GetOrdersRequest(symbol=ticker, status=QueryOrderStatus.CLOSED, limit=10)
+            orders = self.client.get_orders(req)
+            for order in orders:
+                if order.filled_avg_price is not None:
+                    return float(order.filled_avg_price)
+        except Exception as e:
+            log_error('get_filled_exit_price', ticker, str(e))
+        return None
+
     def close_all_positions(self):
         """
         Emergency close of all open positions.

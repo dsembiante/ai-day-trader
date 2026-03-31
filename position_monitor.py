@@ -21,6 +21,7 @@ Usage:
     monitor.check_all_positions()
 """
 
+import time
 from database import Database
 from config import config, HoldPeriod
 from datetime import datetime, timedelta
@@ -81,12 +82,17 @@ class PositionMonitor:
                 # Place a market close order via Alpaca
                 self.executor.close_position(trade['ticker'], trade['trade_type'])
 
+                # Wait for Alpaca to record the fill before querying order history
+                time.sleep(2)
+                exit_price = self.executor.get_filled_exit_price(trade['ticker'])
+
                 # Update the database record so the dashboard and reports
                 # reflect the correct exit reason for post-trade analysis
                 self.db.update_trade_status(
                     trade['trade_id'],
                     status='closed',
-                    exit_reason='hold_period_expired'
+                    exit_reason='hold_period_expired',
+                    exit_price=exit_price,
                 )
             except Exception as e:
                 # Log and continue — a failure on one position should not
@@ -135,10 +141,15 @@ class PositionMonitor:
             try:
                 self.executor.close_position(trade['ticker'], trade['trade_type'])
 
+                # Wait for Alpaca to record the fill before querying order history
+                time.sleep(2)
+                exit_price = self.executor.get_filled_exit_price(trade['ticker'])
+
                 self.db.update_trade_status(
                     trade['trade_id'],
                     status='closed',
-                    exit_reason='intraday_forced_close'  # Distinct from hold_period_expired
+                    exit_reason='intraday_forced_close',  # Distinct from hold_period_expired
+                    exit_price=exit_price,
                 )
             except Exception as e:
                 log_error('intraday_close', trade['ticker'], str(e))
