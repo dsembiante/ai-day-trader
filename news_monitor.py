@@ -6,7 +6,7 @@ Runs as a background thread in scheduler.py, scanning market-wide news every
 headlines are detected.
 
 Design principles:
-    - One Finnhub API call per check (general_news) to stay within free tier limits
+    - Per-ticker yfinance news calls across the S&P 500 universe
     - Local filtering against the S&P 500 universe to identify affected tickers
     - Deduplication via seen_ids set to prevent the same headline triggering twice
     - Watchlist stocks get full position size; universe-only stocks get half size
@@ -23,7 +23,7 @@ Usage:
     breaking = monitor.get_breaking_news()
 """
 
-import finnhub
+import yfinance as yf
 import time
 from datetime import datetime, timedelta
 from config import config
@@ -37,7 +37,6 @@ class NewsMonitor:
     """
 
     def __init__(self):
-        self.client     = finnhub.Client(api_key=config.finnhub_api_key)
         self.seen_ids   = set()   # Prevents same headline triggering multiple analyses
         self.last_check = None    # Timestamp of last API call — enforces 15-min rate limit
 
@@ -62,10 +61,11 @@ class NewsMonitor:
         """
         Enforce a 15-minute minimum interval between API calls.
 
-        Finnhub free tier allows limited requests — fetching general_news more
-        frequently than this would exhaust the quota. The 60-second sleep in
-        the scheduler loop calls this method on each iteration; it only returns
-        True when 15 minutes have elapsed since the last actual API call.
+        yfinance news calls are made per-ticker across the S&P 500 universe —
+        rate-limiting to 15-minute intervals keeps request volume reasonable.
+        The 60-second sleep in the scheduler loop calls this method on each
+        iteration; it only returns True when 15 minutes have elapsed since
+        the last actual API call.
 
         Returns:
             True if enough time has passed to make a new API call.
@@ -79,13 +79,13 @@ class NewsMonitor:
 
     def get_breaking_news(self) -> list:
         """
-        Fetch market-wide news and filter for high-impact, ticker-relevant headlines.
+        Fetch per-ticker news via yfinance and filter for high-impact headlines.
 
-        Uses a single general_news API call rather than per-ticker calls to stay
-        within the Finnhub free tier. Filtering happens locally:
+        Loops through SP500_UNIVERSE calling yf.Ticker(ticker).news for each
+        ticker. Each ticker's fetch is wrapped in its own try/except so one
+        bad ticker does not abort the whole scan. Filtering happens locally:
             1. _is_high_impact() — keyword match on headline text
-            2. SP500_UNIVERSE scan — check if any known ticker is mentioned
-            3. Deduplication — skip any headline ID already in seen_ids
+            2. Deduplication — skip any headline UUID already in seen_ids
 
         Position size multiplier:
             1.0 — ticker is in config.watchlist (we have regular technical analysis)
@@ -99,55 +99,52 @@ class NewsMonitor:
         if not self.should_check():
             return []
 
+        self.last_check = datetime.now()
         breaking = []
-        try:
-            # Single API call covers all market news — no per-ticker calls needed
-            news = self.client.general_news('general', min_id=0)
-            self.last_check = datetime.now()
-            print(f'📰 News check at {datetime.now().strftime("%H:%M")} — {len(news)} headlines scanned')
+        total_scanned = 0
 
-            for item in news:
-                # Skip already-processed headlines
-                if item.get('id') in self.seen_ids:
+        for ticker in self.SP500_UNIVERSE:
+            try:
+                news = yf.Ticker(ticker).news
+                if not news:
                     continue
-                self.seen_ids.add(item.get('id'))
+                total_scanned += len(news)
 
-                headline = item.get('headline', '')
-                summary  = item.get('summary', '')
+                for item in news:
+                    uid = item.get('uuid')
+                    if uid in self.seen_ids:
+                        continue
+                    self.seen_ids.add(uid)
 
-                # Filter out low-impact headlines before ticker matching
-                if not self._is_high_impact(headline):
-                    continue
+                    headline = item.get('title', '')
 
-                # Scan headline and summary for S&P 500 ticker mentions
-                for ticker in self.SP500_UNIVERSE:
-                    if (ticker.lower() in headline.lower() or
-                            ticker.lower() in summary.lower()):
+                    if not self._is_high_impact(headline):
+                        continue
 
-                        is_watchlist = ticker in config.watchlist
+                    is_watchlist = ticker in config.watchlist
 
-                        breaking.append({
-                            'ticker':                  ticker,
-                            'headline':                headline,
-                            'url':                     item.get('url', ''),
-                            'time':                    item.get('datetime', ''),
-                            'is_watchlist_stock':      is_watchlist,
-                            # Half size for universe stocks — less analytical context
-                            'position_size_multiplier': 1.0 if is_watchlist else 0.5,
-                        })
+                    breaking.append({
+                        'ticker':                   ticker,
+                        'headline':                 headline,
+                        'url':                      item.get('link', ''),
+                        'time':                     item.get('providerPublishTime', ''),
+                        'is_watchlist_stock':       is_watchlist,
+                        # Half size for universe stocks — less analytical context
+                        'position_size_multiplier': 1.0 if is_watchlist else 0.5,
+                    })
 
-                        print(
-                            f'  🚨 {ticker} — '
-                            f'{"WATCHLIST" if is_watchlist else "UNIVERSE"} — '
-                            f'{headline[:60]}'
-                        )
-                        # Break after first ticker match per headline to avoid
-                        # one article triggering multiple simultaneous analyses
-                        break
+                    print(
+                        f'  🚨 {ticker} — '
+                        f'{"WATCHLIST" if is_watchlist else "UNIVERSE"} — '
+                        f'{headline[:60]}'
+                    )
+                    # One high-impact article per ticker per check is enough
+                    break
 
-        except Exception as e:
-            log_error('news_monitor', 'general', str(e))
+            except Exception as e:
+                log_error('news_monitor', ticker, str(e))
 
+        print(f'📰 News check at {datetime.now().strftime("%H:%M")} — {total_scanned} headlines scanned')
         return breaking
 
     # ── Impact Filter ─────────────────────────────────────────────────────────
@@ -166,7 +163,7 @@ class NewsMonitor:
             Business:      partnership, contract, deal, layoffs, upgrade, downgrade
 
         Args:
-            headline: Raw headline string from Finnhub.
+            headline: Raw headline string from yfinance.
 
         Returns:
             True if any keyword matches; False for general market commentary.

@@ -8,18 +8,17 @@ receive the best available data and adjust their confidence accordingly.
 
 Sources:
     1. Alpaca      — Current price and volume
-    2. yfinance    — Technical indicators (RSI, MACD, MA50, MA200) and
+    2. yfinance    — Technical indicators (RSI, MACD, MA50, MA200),
                      fundamentals (P/E, forward P/E, EPS, revenue growth,
-                     next earnings date, analyst recommendation)
-    3. Finnhub     — Recent news headlines + company sentiment score
-    4. FRED        — Macro series: Fed Funds Rate + trailing CPI inflation
+                     next earnings date, analyst recommendation), and
+                     recent news headlines
+    3. FRED        — Macro series: Fed Funds Rate + trailing CPI inflation
 
 Usage:
     from data_collector import DataCollector
     data = DataCollector().collect('AAPL')
 """
 
-import finnhub
 import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
@@ -44,9 +43,6 @@ class DataCollector:
         # Alpaca historical client — used for current price and volume
         self.alpaca = StockHistoricalDataClient(
             config.alpaca_api_key, config.alpaca_secret_key)
-
-        # Finnhub client — news and sentiment
-        self.finnhub = finnhub.Client(api_key=config.finnhub_api_key)
 
         # FRED client — macro economic series
         self.fred = Fred(api_key=config.fred_api_key)
@@ -141,24 +137,17 @@ class DataCollector:
             status.yfinance = False
             log_error('yfinance', ticker, str(e))
 
-        # ── 3. Finnhub — News Headlines & Sentiment ───────────────────────────
+        # ── 3. yfinance — Recent News Headlines ──────────────────────────────
+        # Finnhub is no longer used — status stays False so tasks.py data
+        # quality guidance handles it correctly.
+        status.finnhub = False
+        news_sentiment = None  # No free yfinance equivalent for sentiment score
         try:
-            news = self.finnhub.company_news(
-                ticker,
-                _from=(datetime.now() - timedelta(days=3)).strftime('%Y-%m-%d'),
-                to=datetime.now().strftime('%Y-%m-%d')
-            )
+            news = yf.Ticker(ticker).news
             if news:
-                headlines = [n['headline'] for n in news[:5]]
+                headlines = [n['title'] for n in news[:5]]
         except Exception as e:
-            status.finnhub = False
-            log_error('finnhub_news', ticker, str(e))
-
-        try:
-            sd = self.finnhub.news_sentiment(ticker)
-            news_sentiment = sd.get('companyNewsScore', None)
-        except Exception as e:
-            log_error('finnhub_sentiment', ticker, str(e))
+            log_error('yfinance_news', ticker, str(e))
 
         # ── 4. FRED — Macro Economic Context ─────────────────────────────────
         try:
