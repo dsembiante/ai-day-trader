@@ -62,7 +62,7 @@ class PositionSizer:
 
         # Multiplier by hold period — longer holds justified by stronger conviction
         hold_scalar = {
-            HoldPeriod.INTRADAY: 0.7,   # Reduced — limited time for thesis to play out
+            HoldPeriod.INTRADAY: 1.0,   # Full size — risk managed via tighter stop loss pct
             HoldPeriod.SWING:    1.0,   # Baseline
             HoldPeriod.POSITION: 1.3,   # Increased — high-conviction multi-week trade
         }.get(hold_period, 1.0)

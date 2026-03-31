@@ -154,7 +154,7 @@ class TradeExecutor:
                     symbol=decision.ticker,
                     qty=whole_shares,
                     side=side,
-                    time_in_force=TimeInForce.DAY,   # Unfilled limit expires at close
+                    time_in_force=TimeInForce.GTC,   # Unfilled limit expires at close
                     limit_price=decision.entry_price,
                     order_class='bracket',
                     take_profit=TakeProfitRequest(limit_price=decision.take_profit_price),
@@ -166,7 +166,7 @@ class TradeExecutor:
                     symbol=decision.ticker,
                     notional=decision.position_size_usd,  # Dollar amount, not share qty
                     side=side,
-                    time_in_force=TimeInForce.DAY,
+                    time_in_force=TimeInForce.GTC,
                     order_class='bracket',
                     take_profit=TakeProfitRequest(limit_price=decision.take_profit_price),
                     stop_loss=StopLossRequest(stop_price=decision.stop_loss_price),

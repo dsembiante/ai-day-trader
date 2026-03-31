@@ -176,6 +176,8 @@ def create_risk_manager_task(agent, ticker: str, bull_task: Task, bear_task: Tas
     """
     return Task(
         description=f'''
+            CRITICAL: This is a day trading system. You MUST always set hold_period to intraday and max_hold_days to 1. Never recommend swing or position hold periods under any circumstances. All positions must be closed within the same trading day by the end-of-day position monitor.
+
             You are the Risk Manager for {ticker}.
             Review BOTH the bull and bear analyses provided in context.
 
