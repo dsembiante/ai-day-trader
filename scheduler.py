@@ -233,6 +233,7 @@ def news_monitor_loop():
     its minimum interval has elapsed.
     """
     monitor = NewsMonitor()
+    finnhub_error_logged = False
     while True:
         if market_is_open():
             try:
@@ -244,7 +245,9 @@ def news_monitor_loop():
                         item['position_size_multiplier'],
                     )
             except Exception as e:
-                print(f'News monitor error: {e}')
+                if not finnhub_error_logged:
+                    print(f'News monitor error: {e}')
+                    finnhub_error_logged = True
         time.sleep(60)
 
 
