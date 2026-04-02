@@ -82,6 +82,8 @@ def create_bull_task(agent, ticker: str, market_data_summary: str) -> Task:
             - recommended_hold_period: always 'intraday' for this task
             - hold_period_reasoning: why the intraday setup is valid right now
 
+            IMPORTANT: If orb_breakout_down is True OR price_above_vwap is False OR gap_is_bearish is True, you should reduce your bullish conviction significantly. These intraday signals override general technical analysis for day trading purposes. A stock can have good fundamentals but still be a short candidate on a specific day based on intraday momentum.
+
             Be concise — keep reasoning under 3 sentences, key_factors to 2-4 items.
         ''',
         expected_output='JSON object with ticker, recommendation, confidence, reasoning, key_factors, recommended_hold_period, hold_period_reasoning',
@@ -209,6 +211,18 @@ def create_risk_manager_task(agent, ticker: str, bull_task: Task, bear_task: Tas
             - Favor HIGH confidence trades only — intraday has no time to recover from bad entries
             - When bull and bear signals conflict, prefer execute=false over a low-conviction trade
             - When in doubt, do nothing — execute=false is always the safe choice
+
+            INTRADAY DIRECTION SIGNALS — weight these heavily:
+            - If price_above_vwap is False, the intraday trend is DOWN — strongly favor SHORT over BUY.
+            - If price_above_vwap is True, the intraday trend is UP — favor BUY over SHORT.
+            - If orb_breakout_up is True, this is a confirmed bullish breakout — execute BUY with high confidence.
+            - If orb_breakout_down is True, this is a confirmed bearish breakdown — execute SHORT with high confidence.
+            - If gap_is_bearish is True, the day opened with bearish bias — favor SHORT for the entire session unless orb_breakout_up confirms a reversal.
+
+            MARKET DIRECTION BIAS:
+            - If market_regime is bear, strongly favor SHORT and COVER trade types over BUY.
+            - In a bear market regime, only execute BUY trades if there are at least 3 strong confirming bullish signals.
+            - When in doubt in a bear regime, prefer SHORT over BUY.
 
             DATA QUALITY GUIDANCE — evaluate these conditions before setting your confidence score:
             - If alpaca is False in data_sources_available: this ticker should have been skipped upstream — set execute=false.

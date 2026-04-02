@@ -38,6 +38,7 @@ from config import config, HoldPeriod
 from datetime import datetime
 import json
 import uuid
+import yfinance as yf
 
 
 # ── Module-Level Singletons ───────────────────────────────────────────────────
@@ -103,6 +104,20 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     # tickers so agents operate with consistent macro context. Position sizing
     # is scaled down in bear/sideways markets to reduce risk exposure.
     market_regime = collector.get_market_regime()
+
+    # ── Intraday Crash Override ───────────────────────────────────────────────
+    # If SPY is down more than 2% intraday, force bear regime regardless of the
+    # golden/death cross classification — prevents longs during market crashes.
+    try:
+        spy_info = yf.Ticker('SPY').fast_info
+        if spy_info.last_price and spy_info.previous_close and spy_info.previous_close > 0:
+            spy_intraday_chg = (spy_info.last_price - spy_info.previous_close) / spy_info.previous_close
+            if spy_intraday_chg <= -0.02:
+                print(f'🚨 SPY down {spy_intraday_chg*100:.2f}% intraday — overriding regime to BEAR')
+                market_regime = 'bear'
+    except Exception as e:
+        log_error('spy_intraday_check', 'SPY', str(e))
+
     print(f'📈 Market regime: {market_regime.upper()}')
 
     if market_regime == 'bear':

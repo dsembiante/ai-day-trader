@@ -229,7 +229,7 @@ class TradeExecutor:
             req = GetOrdersRequest(symbol=ticker, status=QueryOrderStatus.CLOSED, limit=10)
             orders = self.client.get_orders(req)
             for order in orders:
-                if order.filled_avg_price is not None:
+                if order.symbol == ticker and order.filled_avg_price is not None:
                     return float(order.filled_avg_price)
         except Exception as e:
             log_error('get_filled_exit_price', ticker, str(e))
