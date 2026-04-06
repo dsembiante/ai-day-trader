@@ -304,6 +304,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
 
                 # Submit the bracket order to Alpaca
                 order_result = executor.execute_trade(decision)
+                print(f'[order_result] {ticker}: {order_result}')
 
                 if order_result.get('status') == 'placed':
                     trades_executed += 1
@@ -340,7 +341,12 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
 
                     # Write to both persistence layers — SQLite for querying,
                     # JSON journal for human-readable audit trail
-                    db.insert_trade(trade_record)
+                    try:
+                        db.insert_trade(trade_record)
+                        print(f'✅ Trade record saved to DB: {ticker}')
+                    except Exception as e:
+                        print(f'❌ DB insert failed for {ticker}: {e}')
+                        log_error('database_insert', ticker, str(e))
                     log_trade(trade_record)
 
             else:
@@ -478,6 +484,7 @@ def run_single_ticker(ticker: str, headline: str, position_multiplier: float = 1
             decision.max_hold_days      = sizer.get_max_hold_days(hold)
 
             order_result = executor.execute_trade(decision)
+            print(f'[order_result] {ticker}: {order_result}')
 
             if order_result.get('status') == 'placed':
                 import uuid
@@ -508,7 +515,12 @@ def run_single_ticker(ticker: str, headline: str, position_multiplier: float = 1
                     'entry_time':             datetime.now().isoformat(),
                     'exit_time':              None,
                 }
-                db.insert_trade(trade_record)
+                try:
+                    db.insert_trade(trade_record)
+                    print(f'✅ Trade record saved to DB: {ticker}')
+                except Exception as e:
+                    print(f'❌ DB insert failed for {ticker}: {e}')
+                    log_error('database_insert', ticker, str(e))
                 log_trade(trade_record)
                 print(f'✅ News trade placed: {ticker} ${sizing["position_usd"]:.2f}')
 
