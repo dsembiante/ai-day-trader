@@ -91,6 +91,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     # the portfolio task later in the cycle.
     monitor = PositionMonitor(executor)
     monitor.check_all_positions()
+    monitor.check_dynamic_exits()
 
     # Snapshot of open positions after any expired ones have been closed.
     # Passed to the portfolio task to enforce max_positions and duplicate checks.

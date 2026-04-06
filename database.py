@@ -143,6 +143,22 @@ class Database:
             )
         self.conn.commit()
 
+    def upgrade_trade_to_swing(self, trade_id):
+        """
+        Upgrade an intraday trade to a swing trade in place of force-closing it.
+
+        Called by close_all_intraday() when a position has > 3% unrealized gain
+        at 3:45 PM in a bull market regime. Sets hold_period to 'swing' and
+        max_hold_days to the swing budget from config so _check_hold_expiry()
+        enforces the correct exit window going forward.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                'UPDATE trades SET hold_period=%s, max_hold_days=%s WHERE trade_id=%s',
+                ('swing', config.swing_max_days, trade_id)
+            )
+        self.conn.commit()
+
     # ── Read Operations ───────────────────────────────────────────────────────
 
     def get_all_trades(self) -> list:

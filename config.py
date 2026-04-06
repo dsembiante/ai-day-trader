@@ -127,7 +127,7 @@ class Config(BaseModel):
     # Symbols scanned on every agent cycle. Mix of mega-cap tech, financials,
     # and broad market ETFs for diversified signal generation.
     watchlist: list = [
-        'XOM', 'WMT', 'ED', 'DUK', 'MCD', 'IWM', 'SPY'
+        'SPY', 'QQQ', 'NVDA', 'TSLA', 'AMD', 'AAPL', 'META', 'AMZN'
     ]
 
     # ── File Paths ────────────────────────────────────────────────────────────

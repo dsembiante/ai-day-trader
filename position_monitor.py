@@ -52,6 +52,110 @@ class PositionMonitor:
         for trade in open_trades:
             self._check_hold_expiry(trade)
 
+    def check_dynamic_exits(self):
+        """
+        Evaluate open positions against dynamic intraday exit conditions.
+
+        Runs on every cycle immediately after check_all_positions(). Closes a
+        position when any of the following are true:
+
+        1. Unrealized gain > 2.5%            — take profit early rather than
+                                               waiting for the fixed bracket
+        2. Open > 2 hours AND gain > 1%      — good enough; free the capital
+        3. Price drops below VWAP (long)     — intraday momentum has reversed
+        4. SPY drops > 1.5% from today's open — broad market reversal; exit
+                                               all longs immediately
+
+        The stop-loss bracket placed at entry is not modified — it remains the
+        hard floor. Only the take-profit side is replaced by this dynamic logic.
+        """
+        open_trades = self.db.get_open_trades()
+        if not open_trades:
+            return
+
+        # Live unrealized P&L from Alpaca, keyed by ticker
+        alpaca_positions = {p['ticker']: p for p in self.executor.get_open_positions()}
+
+        # SPY intraday change from today's open — shared signal for all positions
+        spy_reversal = False
+        try:
+            import yfinance as yf
+            spy_info = yf.Ticker('SPY').fast_info
+            if spy_info.open and spy_info.last_price and spy_info.open > 0:
+                spy_drop = (spy_info.last_price - spy_info.open) / spy_info.open
+                if spy_drop <= -0.015:
+                    spy_reversal = True
+                    print(f'🚨 SPY down {spy_drop*100:.2f}% from open — dynamic exit triggered for all longs')
+        except Exception as e:
+            log_error('dynamic_exit_spy', 'SPY', str(e))
+
+        # DataCollector provides get_vwap() — imported lazily to avoid a
+        # circular import at module level (data_collector imports config)
+        from data_collector import DataCollector
+        collector = DataCollector()
+
+        for trade in open_trades:
+            ticker = trade['ticker']
+            trade_type = trade.get('trade_type', 'buy')
+            is_long = trade_type in ('buy', 'long')
+
+            alpaca_pos = alpaca_positions.get(ticker)
+            if not alpaca_pos:
+                continue  # Position not yet reflected in Alpaca — skip this cycle
+
+            unrealized_pl = alpaca_pos['unrealized_pl']
+            entry_price = trade.get('entry_price')
+            shares = trade.get('shares') or 0
+
+            # Unrealized gain % from entry; None when entry data is missing
+            gain_pct = None
+            if entry_price and entry_price > 0 and shares > 0:
+                gain_pct = unrealized_pl / (entry_price * shares)
+
+            exit_reason = None
+
+            # Condition 1: gain > 2.5% — early take-profit
+            if gain_pct is not None and gain_pct > 0.025:
+                exit_reason = 'dynamic_take_profit'
+                print(f'💰 {ticker} dynamic take-profit: {gain_pct*100:.2f}% gain')
+
+            # Condition 2: open > 2 hours AND gain > 1% — free the capital
+            elif gain_pct is not None and gain_pct > 0.01:
+                entry_time = datetime.fromisoformat(trade['entry_time'])
+                hours_open = (datetime.now() - entry_time).total_seconds() / 3600
+                if hours_open >= 2.0:
+                    exit_reason = 'dynamic_time_profit'
+                    print(f'⏱️ {ticker} 2h+ with {gain_pct*100:.2f}% gain — freeing capital')
+
+            # Condition 3: VWAP cross against long position
+            if exit_reason is None and is_long:
+                try:
+                    vwap, price_above_vwap = collector.get_vwap(ticker)
+                    if vwap is not None and price_above_vwap is False:
+                        exit_reason = 'vwap_cross_exit'
+                        print(f'📉 {ticker} dropped below VWAP ({vwap:.2f}) — exiting long')
+                except Exception as e:
+                    log_error('dynamic_exit_vwap', ticker, str(e))
+
+            # Condition 4: SPY broad market reversal — exit all longs
+            if exit_reason is None and is_long and spy_reversal:
+                exit_reason = 'spy_reversal_exit'
+                print(f'🚨 {ticker} closed: SPY intraday reversal > 1.5%')
+
+            if exit_reason:
+                try:
+                    self.executor.close_position(ticker, trade_type)
+                    time.sleep(2)
+                    exit_price = self.executor.get_filled_exit_price(ticker)
+                    self.db.update_trade_status(
+                        trade['trade_id'],
+                        status='closed',
+                        exit_reason=exit_reason,
+                        exit_price=exit_price,
+                    )
+                except Exception as e:
+                    log_error('dynamic_exit', ticker, str(e))
+
     # ── Hold Period Enforcement ───────────────────────────────────────────────
 
     def _check_hold_expiry(self, trade: dict):
@@ -120,6 +224,11 @@ class PositionMonitor:
         returns True. Intraday positions must never be held overnight — the
         wider gap risk is outside the risk budget defined for this hold tier.
 
+        Hybrid overnight rule: if an intraday position has > 3% unrealized gain
+        at this point AND the market regime is BULL, it is upgraded to a swing
+        trade (hold_period=swing, max_hold_days=5) instead of being closed. The
+        position stays open with its existing stop-loss bracket intact.
+
         Guard: if config.allow_intraday is False, no intraday positions should
         exist (get_hold_period_safe() upgrades them all to swing at entry).
         The early return here is a safety net for that case.
@@ -137,13 +246,38 @@ class PositionMonitor:
         # Filter to intraday tier only — swing and position trades are unaffected
         intraday = [t for t in open_trades if t.get('hold_period') == 'intraday']
 
+        # Pre-fetch Alpaca positions and market regime once for the entire batch
+        alpaca_positions = {p['ticker']: p for p in self.executor.get_open_positions()}
+        from data_collector import DataCollector
+        market_regime = DataCollector().get_market_regime()
+
         for trade in intraday:
+            ticker = trade['ticker']
+
+            # Hybrid overnight rule: > 3% gain in bull regime → upgrade to swing
+            if market_regime == 'bull':
+                alpaca_pos = alpaca_positions.get(ticker)
+                entry_price = trade.get('entry_price')
+                shares = trade.get('shares') or 0
+                if alpaca_pos and entry_price and entry_price > 0 and shares > 0:
+                    gain_pct = alpaca_pos['unrealized_pl'] / (entry_price * shares)
+                    if gain_pct > 0.03:
+                        print(
+                            f'🌙 {ticker} upgraded to swing: {gain_pct*100:.2f}% gain '
+                            f'in bull regime — holding overnight'
+                        )
+                        try:
+                            self.db.upgrade_trade_to_swing(trade['trade_id'])
+                        except Exception as e:
+                            log_error('upgrade_to_swing', ticker, str(e))
+                        continue  # Skip force-close — position stays open as swing
+
             try:
-                self.executor.close_position(trade['ticker'], trade['trade_type'])
+                self.executor.close_position(ticker, trade['trade_type'])
 
                 # Wait for Alpaca to record the fill before querying order history
                 time.sleep(2)
-                exit_price = self.executor.get_filled_exit_price(trade['ticker'])
+                exit_price = self.executor.get_filled_exit_price(ticker)
 
                 self.db.update_trade_status(
                     trade['trade_id'],
@@ -152,4 +286,4 @@ class PositionMonitor:
                     exit_price=exit_price,
                 )
             except Exception as e:
-                log_error('intraday_close', trade['ticker'], str(e))
+                log_error('intraday_close', ticker, str(e))
