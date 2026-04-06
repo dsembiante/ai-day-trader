@@ -359,9 +359,10 @@ class DataCollector:
             bars = self.alpaca.get_stock_bars(StockBarsRequest(
                 symbol_or_symbols=ticker,
                 timeframe=TimeFrame.Day,
-                start=datetime.now() - timedelta(days=30),
+                start=datetime.now() - timedelta(days=45),
             ))
             df = bars.df.reset_index()
+            print(f'[volume_confirmation] {ticker} — {len(df)} bars returned from Alpaca')
             if df.empty or len(df) < 21:
                 return None, None
             avg_volume = float(df['volume'].iloc[-21:-1].mean())  # 20-day avg, excluding today
