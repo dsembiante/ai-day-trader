@@ -129,10 +129,12 @@ class TradeExecutor:
         """
         # Gate 1: crew explicitly flagged this as a no-trade cycle
         if not decision.execute:
+            print(f'[executor] {decision.ticker} — skipped: execute=False')
             return {'status': 'skipped', 'reason': 'execute=False'}
 
         # Gate 2: confidence below minimum threshold
         if decision.confidence < config.confidence_threshold:
+            print(f'[executor] {decision.ticker} — skipped: confidence {decision.confidence} below threshold {config.confidence_threshold}')
             return {
                 'status': 'skipped',
                 'reason': f'confidence {decision.confidence} below threshold',
@@ -149,6 +151,7 @@ class TradeExecutor:
                 # position but guarantees the bracket order is accepted.
                 whole_shares = int(decision.position_size_usd / decision.entry_price)
                 if whole_shares < 1:
+                    print(f'[executor] {decision.ticker} — skipped: position too small ({whole_shares} shares at ${decision.entry_price})')
                     return {'status': 'skipped', 'reason': 'position too small for 1 whole share'}
                 order_data = LimitOrderRequest(
                     symbol=decision.ticker,
@@ -172,8 +175,10 @@ class TradeExecutor:
                     stop_loss=StopLossRequest(stop_price=decision.stop_loss_price),
                 )
 
+            print(f'[executor] {decision.ticker} — stop: ${decision.stop_loss_price}, target: ${decision.take_profit_price}, entry: ${decision.entry_price}')
             order = self.client.submit_order(order_data)
 
+            print(f'[executor] {decision.ticker} — placed successfully: {whole_shares if decision.order_type == "limit" and decision.entry_price else "notional"} shares at ${decision.entry_price}')
             print(
                 f'✅ Order placed: {decision.trade_type} {decision.ticker} '
                 f'| ${decision.position_size_usd:.2f}'
@@ -187,6 +192,7 @@ class TradeExecutor:
             }
 
         except Exception as e:
+            print(f'[executor] {decision.ticker} — ERROR: {str(e)}')
             log_error('trade_executor', decision.ticker, str(e))
             return {'status': 'error', 'error': str(e)}
 
