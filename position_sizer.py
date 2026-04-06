@@ -83,58 +83,80 @@ class PositionSizer:
             'pct_of_portfolio': round(position_usd / portfolio_value * 100, 2),
         }
 
-    def get_stop_loss(self, entry: float, trade_type: str, hold: HoldPeriod) -> float:
+    # ── ATR-based stop/target caps (intraday only) ────────────────────────────
+    _ATR_STOP_MIN  = 0.005   # 0.5% — floor: never tigher than bid/ask noise
+    _ATR_STOP_MAX  = 0.05    # 5.0% — ceiling: max intraday risk per trade
+    _ATR_TARGET_MIN = 0.01   # 1.0% — floor on take-profit
+    _ATR_TARGET_MAX = 0.10   # 10.0% — ceiling on take-profit
+
+    def get_stop_loss(self, entry: float, trade_type: str, hold: HoldPeriod,
+                      atr_pct: float = None, ticker: str = '') -> float:
         """
         Calculate the stop-loss price for a position.
 
-        Stop percentages are read from config per hold tier:
-            Intraday: 2% | Swing: 5% | Position: 8%
-
-        For long trades the stop is below entry; for short trades the stop is
-        above entry to limit loss on an adverse upward price move.
+        For INTRADAY trades with a valid atr_pct, uses 1.5 × ATR% as the stop
+        distance (capped between 0.5% and 5%). Falls back to the fixed config
+        percentage for non-intraday holds or when ATR is unavailable.
 
         Args:
             entry:      Fill price at trade entry.
             trade_type: 'buy' / 'long' for longs; 'short' for shorts.
             hold:       Hold period tier determining the stop percentage.
+            atr_pct:    14-day ATR as a % of price from data_collector. Optional.
+            ticker:     Symbol name used in log output only.
 
         Returns:
             Stop-loss price rounded to 2 decimal places.
         """
-        pct = {
-            HoldPeriod.INTRADAY: config.intraday_stop_loss_pct,
-            HoldPeriod.SWING:    config.swing_stop_loss_pct,
-            HoldPeriod.POSITION: config.position_stop_loss_pct,
-        }.get(hold, config.swing_stop_loss_pct)  # Default to swing if unrecognised
+        if hold == HoldPeriod.INTRADAY and atr_pct is not None and atr_pct > 0:
+            raw_stop = (atr_pct / 100) * 1.5
+            pct = max(self._ATR_STOP_MIN, min(self._ATR_STOP_MAX, raw_stop))
+            # Caller prints the combined ATR log line after both calls return
+            self._last_atr_stop_pct   = pct
+        else:
+            pct = {
+                HoldPeriod.INTRADAY: config.intraday_stop_loss_pct,
+                HoldPeriod.SWING:    config.swing_stop_loss_pct,
+                HoldPeriod.POSITION: config.position_stop_loss_pct,
+            }.get(hold, config.swing_stop_loss_pct)
+            self._last_atr_stop_pct = None  # Signals fixed-stop path to caller
 
         type_str = trade_type.value if hasattr(trade_type, 'value') else str(trade_type)
         if type_str in ('buy', 'long'):
             return round(entry * (1 - pct), 2)  # Stop below entry for longs
         return round(entry * (1 + pct), 2)       # Stop above entry for shorts
 
-    def get_take_profit(self, entry: float, trade_type: str, hold: HoldPeriod) -> float:
+    def get_take_profit(self, entry: float, trade_type: str, hold: HoldPeriod,
+                        atr_pct: float = None, ticker: str = '') -> float:
         """
         Calculate the take-profit price for a position.
 
-        Take-profit percentages per hold tier:
-            Intraday: 4% | Swing: 10% | Position: 20%
-
-        Reward-to-risk is always 2:1 across all tiers by design
-        (take-profit % is exactly double the stop-loss %).
+        For INTRADAY trades with a valid atr_pct, uses 3.0 × ATR% as the target
+        distance (capped between 1% and 10%), preserving the 2:1 reward-to-risk
+        ratio relative to the 1.5× ATR stop. Falls back to config fixed percentages
+        for non-intraday holds or when ATR is unavailable.
 
         Args:
             entry:      Fill price at trade entry.
             trade_type: 'buy' / 'long' for longs; 'short' for shorts.
             hold:       Hold period tier determining the target percentage.
+            atr_pct:    14-day ATR as a % of price from data_collector. Optional.
+            ticker:     Symbol name used in log output only.
 
         Returns:
             Take-profit price rounded to 2 decimal places.
         """
-        pct = {
-            HoldPeriod.INTRADAY: config.intraday_take_profit_pct,
-            HoldPeriod.SWING:    config.swing_take_profit_pct,
-            HoldPeriod.POSITION: config.position_take_profit_pct,
-        }.get(hold, config.swing_take_profit_pct)
+        if hold == HoldPeriod.INTRADAY and atr_pct is not None and atr_pct > 0:
+            raw_target = (atr_pct / 100) * 3.0
+            pct = max(self._ATR_TARGET_MIN, min(self._ATR_TARGET_MAX, raw_target))
+            self._last_atr_target_pct = pct
+        else:
+            pct = {
+                HoldPeriod.INTRADAY: config.intraday_take_profit_pct,
+                HoldPeriod.SWING:    config.swing_take_profit_pct,
+                HoldPeriod.POSITION: config.position_take_profit_pct,
+            }.get(hold, config.swing_take_profit_pct)
+            self._last_atr_target_pct = None
 
         type_str = trade_type.value if hasattr(trade_type, 'value') else str(trade_type)
         if type_str in ('buy', 'long'):

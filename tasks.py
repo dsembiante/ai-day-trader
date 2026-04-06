@@ -232,6 +232,11 @@ def create_risk_manager_task(agent, ticker: str, bull_task: Task, bear_task: Tas
             - If fred is False in data_sources_available: you are missing macro context. Apply extra caution on interest-rate-sensitive stocks such as utilities, REITs, and consumer staples.
             - If 2 or more sources other than finnhub show False in data_sources_available: set execute=false — insufficient data to make a reliable decision.
 
+            VIX GUIDANCE — adjust sizing based on current volatility environment:
+            - VIX above 25 (HIGH): Large intraday moves available. Reduce confidence threshold to 0.80 — more opportunities are valid. The position sizer will automatically increase size.
+            - VIX below 15 (LOW): Small intraday moves expected. Raise confidence threshold to 0.87 — only the strongest setups are worth trading.
+            - VIX 15-25 (NORMAL): Proceed with standard confidence threshold of 0.82.
+
             Be concise — keep all reasoning fields under 2 sentences each.
         ''',
         expected_output='JSON object with ticker, execute, trade_type, order_type, hold_period, confidence, position_size_usd, entry_price, stop_loss_price, take_profit_price, max_hold_days, bull_reasoning, bear_reasoning, risk_manager_reasoning, hold_period_reasoning',

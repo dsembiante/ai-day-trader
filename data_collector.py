@@ -30,6 +30,7 @@ import pandas as pd
 import pandas_ta as ta
 import json, os
 from datetime import datetime, timedelta
+from typing import Optional
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
@@ -73,6 +74,7 @@ class DataCollector:
         news_sentiment = None
         headlines = []
         macro_context = None
+        vix = None
         vwap = price_above_vwap = atr_pct = None
         opening_range_high = opening_range_low = None
         orb_breakout_up = orb_breakout_down = None
@@ -200,7 +202,10 @@ class DataCollector:
         except Exception as e:
             log_error('yfinance_news', ticker, str(e))
 
-        # ── 4. FRED — Macro Economic Context ─────────────────────────────────
+        # ── 4. VIX — Volatility Index ─────────────────────────────────────────
+        vix = self.get_vix()
+
+        # ── 5. FRED — Macro Economic Context ─────────────────────────────────
         try:
             macro_cache = f"{config.cache_dir}/macro_{datetime.now().strftime('%Y%m%d')}.json"
             if os.path.exists(macro_cache):
@@ -222,7 +227,7 @@ class DataCollector:
             status.fred = False
             log_error('fred', ticker, str(e))
 
-        # ── 5. Intraday Indicators (all via Alpaca) ───────────────────────────
+        # ── 6. Intraday Indicators (all via Alpaca) ───────────────────────────
         current_price = price or 0.0
         current_volume = volume or 0
         vwap, price_above_vwap                               = self.get_vwap(ticker)
@@ -261,6 +266,7 @@ class DataCollector:
             gap_is_bearish=gap_is_bearish,
             volume_ratio=volume_ratio,
             volume_confirmed=volume_confirmed,
+            vix=vix,
             data_sources_used=status,
         )
 
@@ -368,7 +374,7 @@ class DataCollector:
             log_error('volume_confirmation', ticker, str(e))
             return None, None
 
-    def get_atr(self, ticker: str, current_price: float) -> 'Optional[float]':
+    def get_atr(self, ticker: str, current_price: float) -> Optional[float]:
         """
         Calculate 14-day Average True Range as a percentage of current price.
         ATR% = ATR / current_price * 100
@@ -397,6 +403,38 @@ class DataCollector:
         except Exception as e:
             log_error('atr', ticker, str(e))
             return None
+
+    def get_vix(self) -> Optional[float]:
+        """
+        Fetch the current VIX level from yfinance (^VIX), cached daily.
+
+        Uses the same pattern as the FRED macro cache: check for an existing
+        daily cache file first, fetch from yfinance on a miss, write on success.
+        Returns the VIX close as a float, or None on any failure — callers must
+        default to NORMAL regime and 0.82 confidence threshold when None.
+        """
+        vix_cache = f"{config.cache_dir}/vix_{datetime.now().strftime('%Y%m%d')}.json"
+        if os.path.exists(vix_cache):
+            try:
+                with open(vix_cache) as f:
+                    return float(json.load(f)['vix'])
+            except Exception:
+                pass  # Fall through to live fetch
+
+        try:
+            hist = yf.Ticker('^VIX').history(period='1d')
+            if not hist.empty:
+                vix_val = float(hist['Close'].iloc[-1])
+                try:
+                    with open(vix_cache, 'w') as f:
+                        json.dump({'vix': vix_val}, f)
+                except Exception:
+                    pass
+                return vix_val
+        except Exception as e:
+            log_error('vix', '^VIX', str(e))
+
+        return None
 
     def get_market_regime(self) -> str:
         """

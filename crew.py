@@ -130,6 +130,26 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     else:
         config.max_position_pct = 0.10   # 10% per trade in bull market (~$3,000 on $30k)
 
+    # ── VIX-Based Confidence Threshold ───────────────────────────────────────
+    # Fetched once per cycle (cached daily by get_vix). VIX failure never aborts
+    # the cycle — defaults to NORMAL regime and the standard 0.82 threshold.
+    vix_level = collector.get_vix()
+    if vix_level is not None:
+        if vix_level > 25:
+            vix_regime = 'HIGH VOLATILITY'
+            config.confidence_threshold = 0.80
+        elif vix_level < 15:
+            vix_regime = 'LOW VOLATILITY'
+            config.confidence_threshold = 0.87
+        else:
+            vix_regime = 'NORMAL'
+            config.confidence_threshold = 0.82
+        print(f'📉 VIX: {vix_level:.1f} ({vix_regime}) — confidence threshold: {config.confidence_threshold}')
+    else:
+        vix_regime = 'NORMAL'
+        config.confidence_threshold = 0.82
+        print('⚠️  VIX unavailable — defaulting to NORMAL regime, confidence threshold 0.82')
+
     # ── Agent Instantiation ───────────────────────────────────────────────────
     # Agents are created once per cycle (not per ticker) and reused.
     # Each agent holds the same shared LLM client from agents.py, so creating
@@ -201,6 +221,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 Next Earnings: {market_data.next_earnings_date or 'N/A'}
                 Analyst Recommendation: {market_data.analyst_recommendation or 'N/A'}
                 Market Regime: {market_regime.upper()}
+                VIX: {f'{market_data.vix:.1f} ({"HIGH VOLATILITY" if market_data.vix > 25 else "LOW VOLATILITY" if market_data.vix < 15 else "NORMAL"})' if market_data.vix is not None else 'N/A'}
                 News headlines: {market_data.news_headlines[:5]}
                 Macro context: {market_data.macro_context or 'N/A'}
                 Data sources available: {market_data.data_sources_used.model_dump()}
@@ -266,12 +287,20 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 )
                 decision.position_size_usd  = sizing['position_usd']
                 decision.stop_loss_price    = sizer.get_stop_loss(
-                    market_data.current_price, decision.trade_type, hold
+                    market_data.current_price, decision.trade_type, hold,
+                    atr_pct=market_data.atr_pct, ticker=ticker,
                 )
                 decision.take_profit_price  = sizer.get_take_profit(
-                    market_data.current_price, decision.trade_type, hold
+                    market_data.current_price, decision.trade_type, hold,
+                    atr_pct=market_data.atr_pct, ticker=ticker,
                 )
                 decision.max_hold_days      = sizer.get_max_hold_days(hold)
+
+                # Log whether ATR-based or fixed stops were applied
+                if sizer._last_atr_stop_pct is not None and sizer._last_atr_target_pct is not None:
+                    print(f'🎯 ATR-based stops: {ticker} — stop {sizer._last_atr_stop_pct*100:.1f}% / target {sizer._last_atr_target_pct*100:.1f}% (ATR: {market_data.atr_pct:.1f}%)')
+                else:
+                    print(f'⚠️  ATR unavailable for {ticker} — using fixed stops')
 
                 # Submit the bracket order to Alpaca
                 order_result = executor.execute_trade(decision)
@@ -435,9 +464,17 @@ def run_single_ticker(ticker: str, headline: str, position_multiplier: float = 1
 
             decision.position_size_usd  = sizing['position_usd']
             decision.stop_loss_price    = sizer.get_stop_loss(
-                market_data.current_price, decision.trade_type, hold)
+                market_data.current_price, decision.trade_type, hold,
+                atr_pct=market_data.atr_pct, ticker=ticker,
+            )
             decision.take_profit_price  = sizer.get_take_profit(
-                market_data.current_price, decision.trade_type, hold)
+                market_data.current_price, decision.trade_type, hold,
+                atr_pct=market_data.atr_pct, ticker=ticker,
+            )
+            if sizer._last_atr_stop_pct is not None and sizer._last_atr_target_pct is not None:
+                print(f'🎯 ATR-based stops: {ticker} — stop {sizer._last_atr_stop_pct*100:.1f}% / target {sizer._last_atr_target_pct*100:.1f}% (ATR: {market_data.atr_pct:.1f}%)')
+            else:
+                print(f'⚠️  ATR unavailable for {ticker} — using fixed stops')
             decision.max_hold_days      = sizer.get_max_hold_days(hold)
 
             order_result = executor.execute_trade(decision)

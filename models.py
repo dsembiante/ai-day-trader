@@ -107,6 +107,9 @@ class MarketData(BaseModel):
     # Macro — None when FRED is unreachable
     macro_context: Optional[str] = None    # Free-text summary of relevant macro conditions
 
+    # VIX — None when yfinance fetch fails
+    vix: Optional[float] = None            # CBOE Volatility Index (daily cached)
+
     # Tracks which sources contributed to this snapshot
     data_sources_used: DataSourceStatus = DataSourceStatus()
 
