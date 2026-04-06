@@ -132,27 +132,42 @@ class TradeExecutor:
             print(f'[executor] {decision.ticker} — skipped: execute=False')
             return {'status': 'skipped', 'reason': 'execute=False'}
 
-        # Gate 2: confidence below minimum threshold
-        if decision.confidence < config.confidence_threshold:
-            print(f'[executor] {decision.ticker} — skipped: confidence {decision.confidence} below threshold {config.confidence_threshold}')
-            return {
-                'status': 'skipped',
-                'reason': f'confidence {decision.confidence} below threshold',
-            }
-
         try:
             # Map trade_type string to Alpaca's OrderSide enum
             side = OrderSide.BUY if decision.trade_type in ['buy'] else OrderSide.SELL
+            type_str = decision.trade_type.value if hasattr(decision.trade_type, 'value') else str(decision.trade_type)
 
+            # ── Limit → Market fallback ───────────────────────────────────────
+            # Alpaca rejects fractional shares on bracket orders, so whole_shares
+            # is floored to the nearest integer. If that produces 0 shares, fall
+            # through to the market/notional path which supports fractional fills.
             if decision.order_type == 'limit' and decision.entry_price:
-                # Limit bracket order — preferred path for controlled entry.
-                # Alpaca rejects fractional shares on bracket orders, so qty is
-                # floored to the nearest whole share. This slightly undersizes the
-                # position but guarantees the bracket order is accepted.
                 whole_shares = int(decision.position_size_usd / decision.entry_price)
                 if whole_shares < 1:
-                    print(f'[executor] {decision.ticker} — skipped: position too small ({whole_shares} shares at ${decision.entry_price})')
-                    return {'status': 'skipped', 'reason': 'position too small for 1 whole share'}
+                    print(f'[executor] {decision.ticker} — limit order too small ({whole_shares} shares at ${decision.entry_price}), falling back to market order')
+                    decision.order_type = 'market'
+
+            # ── Price validation ──────────────────────────────────────────────
+            # Guard against ATR-based stops that land on the wrong side of entry.
+            # Falls back to fixed config percentages for any invalid price.
+            if decision.entry_price:
+                if type_str in ('buy',):
+                    if decision.stop_loss_price and decision.stop_loss_price >= decision.entry_price:
+                        print(f'[executor] {decision.ticker} — invalid stop loss above entry, recalculating')
+                        decision.stop_loss_price = round(decision.entry_price * (1 - config.intraday_stop_loss_pct), 2)
+                    if decision.take_profit_price and decision.take_profit_price <= decision.entry_price:
+                        print(f'[executor] {decision.ticker} — invalid take profit below entry, recalculating')
+                        decision.take_profit_price = round(decision.entry_price * (1 + config.intraday_take_profit_pct), 2)
+                else:  # short
+                    if decision.stop_loss_price and decision.stop_loss_price <= decision.entry_price:
+                        print(f'[executor] {decision.ticker} — invalid stop loss below entry for short, recalculating')
+                        decision.stop_loss_price = round(decision.entry_price * (1 + config.intraday_stop_loss_pct), 2)
+                    if decision.take_profit_price and decision.take_profit_price >= decision.entry_price:
+                        print(f'[executor] {decision.ticker} — invalid take profit above entry for short, recalculating')
+                        decision.take_profit_price = round(decision.entry_price * (1 - config.intraday_take_profit_pct), 2)
+
+            # ── Order construction ────────────────────────────────────────────
+            if decision.order_type == 'limit' and decision.entry_price:
                 order_data = LimitOrderRequest(
                     symbol=decision.ticker,
                     qty=whole_shares,
@@ -164,10 +179,10 @@ class TradeExecutor:
                     stop_loss=StopLossRequest(stop_price=decision.stop_loss_price),
                 )
             else:
-                # Market bracket order — fallback; uses notional for fractional share support
+                # Market bracket order — notional dollar amount supports fractional shares
                 order_data = MarketOrderRequest(
                     symbol=decision.ticker,
-                    notional=decision.position_size_usd,  # Dollar amount, not share qty
+                    notional=decision.position_size_usd,
                     side=side,
                     time_in_force=TimeInForce.GTC,
                     order_class='bracket',
@@ -175,10 +190,10 @@ class TradeExecutor:
                     stop_loss=StopLossRequest(stop_price=decision.stop_loss_price),
                 )
 
-            print(f'[executor] {decision.ticker} — stop: ${decision.stop_loss_price}, target: ${decision.take_profit_price}, entry: ${decision.entry_price}')
+            print(f'[executor] {decision.ticker} — submitting: stop ${decision.stop_loss_price}, target ${decision.take_profit_price}, entry ${decision.entry_price}')
             order = self.client.submit_order(order_data)
 
-            print(f'[executor] {decision.ticker} — placed successfully: {whole_shares if decision.order_type == "limit" and decision.entry_price else "notional"} shares at ${decision.entry_price}')
+            print(f'[executor] {decision.ticker} — placed successfully')
             print(
                 f'✅ Order placed: {decision.trade_type} {decision.ticker} '
                 f'| ${decision.position_size_usd:.2f}'
