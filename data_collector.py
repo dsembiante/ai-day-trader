@@ -198,7 +198,7 @@ class DataCollector:
         try:
             news = yf.Ticker(ticker).news
             if news:
-                headlines = [n['title'] for n in news[:5]]
+                headlines = [n.get('title', '') for n in news[:5] if n.get('title')]
         except Exception as e:
             log_error('yfinance_news', ticker, str(e))
 
