@@ -226,6 +226,17 @@ class TradeExecutor:
             trade_type: Included for logging context; not used by Alpaca directly.
         """
         try:
+            # Cancel all open orders (bracket legs) before closing the position.
+            # Alpaca error 40310000 occurs when shares are held for open bracket
+            # orders — cancelling first releases the hold so the close can proceed.
+            try:
+                self.client.cancel_orders_for_symbol(ticker)
+                print(f'[close_position] {ticker} — bracket orders cancelled')
+                time.sleep(1)
+            except Exception as cancel_err:
+                log_error('cancel_orders', ticker, str(cancel_err))
+                print(f'[close_position] {ticker} — order cancellation failed: {cancel_err}')
+
             self.client.close_position(ticker)
             print(f'✅ Position closed: {ticker}')
         except Exception as e:
