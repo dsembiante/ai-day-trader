@@ -82,6 +82,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     # Protective exits always run regardless of circuit breaker state — these
     # close existing risk, not open new positions.
     monitor = PositionMonitor(executor)
+    print(f'[position_monitor] Running checks on {len(executor.get_open_positions())} open positions...')
     monitor.check_all_positions()
     monitor.check_dynamic_exits()
 

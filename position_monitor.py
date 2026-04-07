@@ -200,6 +200,14 @@ class PositionMonitor:
             if open_price == 0:
                 return None
 
+            # Sanity check: if open_price is more than 10% from current_price,
+            # the bar data is stale, pre-market, or from a different session.
+            # Log and bail rather than firing a false reversal signal.
+            if abs(open_price - current_price) / current_price > 0.10:
+                print(f'[market_reversal] SPY open_price ${open_price:.2f} is >10% from current ${current_price:.2f} — likely bad bar data, skipping')
+                log_error('check_market_reversal', 'SPY', f'open_price sanity check failed: open={open_price}, current={current_price}')
+                return None
+
             spy_move = (current_price - open_price) / open_price
 
             open_trades = self.db.get_open_trades()
