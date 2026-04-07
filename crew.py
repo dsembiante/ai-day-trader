@@ -93,6 +93,27 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     monitor.check_all_positions()
     monitor.check_dynamic_exits()
 
+    # ── Market Reversal Check ─────────────────────────────────────────────────
+    # If SPY has moved > 2% from today's open, immediately close all positions
+    # on the wrong side before running new analysis.
+    reversal = monitor.check_market_reversal()
+    if reversal in ('cover_longs', 'cover_shorts'):
+        target_types = ('buy', 'long') if reversal == 'cover_longs' else ('short',)
+        for trade in db.get_open_trades():
+            if trade.get('trade_type') in target_types:
+                try:
+                    executor.close_position(trade['ticker'], trade['trade_type'])
+                    import time as _time; _time.sleep(2)
+                    exit_price = executor.get_filled_exit_price(trade['ticker'])
+                    db.update_trade_status(
+                        trade['trade_id'],
+                        status='closed',
+                        exit_reason=f'market_reversal_{reversal}',
+                        exit_price=exit_price,
+                    )
+                except Exception as e:
+                    log_error('market_reversal_close', trade['ticker'], str(e))
+
     # Snapshot of open positions after any expired ones have been closed.
     # Passed to the portfolio task to enforce max_positions and duplicate checks.
     open_positions = executor.get_open_positions()

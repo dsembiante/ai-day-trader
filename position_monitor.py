@@ -156,6 +156,68 @@ class PositionMonitor:
                 except Exception as e:
                     log_error('dynamic_exit', ticker, str(e))
 
+    def check_market_reversal(self) -> 'str | None':
+        """
+        Detect sharp intraday SPY moves and signal which side needs to be covered.
+
+        Uses today's opening bar (first 1-min bar after 9:30 AM ET) as the
+        reference price, comparing it to the most recent bar's close. Fetches
+        data via the DataCollector's Alpaca client — same pattern as get_vwap().
+
+        Returns:
+            'cover_shorts' — SPY up > 2% from open and short positions are open
+            'cover_longs'  — SPY down > 2% from open and long positions are open
+            None           — no reversal, or fetch failed
+        """
+        try:
+            from data_collector import DataCollector
+            from alpaca.data.requests import StockBarsRequest
+            from alpaca.data.timeframe import TimeFrame
+            import pandas as pd
+
+            dc = DataCollector()
+            bars = dc.alpaca.get_stock_bars(StockBarsRequest(
+                symbol_or_symbols='SPY',
+                timeframe=TimeFrame.Minute,
+                start=datetime.now() - timedelta(hours=8),
+            ))
+            df = bars.df.reset_index()
+            if df.empty:
+                return None
+
+            # Convert to ET and isolate bars from today's regular session open
+            ts = pd.to_datetime(df['timestamp'])
+            if ts.dt.tz is None:
+                ts = ts.dt.tz_localize('UTC')
+            df['timestamp'] = ts.dt.tz_convert('America/New_York')
+            df = df.set_index('timestamp')
+            session_bars = df.between_time('09:30', '16:00')
+            if session_bars.empty:
+                return None
+
+            open_price    = float(session_bars['open'].iloc[0])
+            current_price = float(session_bars['close'].iloc[-1])
+            if open_price == 0:
+                return None
+
+            spy_move = (current_price - open_price) / open_price
+
+            open_trades = self.db.get_open_trades()
+            has_longs  = any(t.get('trade_type') in ('buy', 'long')  for t in open_trades)
+            has_shorts = any(t.get('trade_type') in ('short',)        for t in open_trades)
+
+            if spy_move >= 0.02 and has_shorts:
+                print(f'🚨 Market reversal detected: SPY up {spy_move*100:.1f}% from open — covering all shorts')
+                return 'cover_shorts'
+            if spy_move <= -0.02 and has_longs:
+                print(f'🚨 Market reversal detected: SPY down {abs(spy_move)*100:.1f}% from open — covering all longs')
+                return 'cover_longs'
+
+        except Exception as e:
+            log_error('check_market_reversal', 'SPY', str(e))
+
+        return None
+
     # ── Hold Period Enforcement ───────────────────────────────────────────────
 
     def _check_hold_expiry(self, trade: dict):

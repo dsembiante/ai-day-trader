@@ -198,7 +198,16 @@ class DataCollector:
         try:
             news = yf.Ticker(ticker).news
             if news:
-                headlines = [n.get('title', '') for n in news[:5] if n.get('title')]
+                def _extract_title(item):
+                    if 'title' in item and item['title']:
+                        return item['title']
+                    if 'content' in item and isinstance(item['content'], dict):
+                        if 'title' in item['content']:
+                            return item['content']['title']
+                    if 'headline' in item and item['headline']:
+                        return item['headline']
+                    return None
+                headlines = [t for t in [_extract_title(n) for n in news[:5]] if t]
         except Exception as e:
             log_error('yfinance_news', ticker, str(e))
 

@@ -187,5 +187,11 @@ class NewsMonitor:
             'bankruptcy', 'default', 'debt', 'layoffs',
             # Business events
             'partnership', 'contract', 'deal', 'agreement',
+            # Macro market movers
+            'tariff', 'tariffs', 'trade war', 'trade deal', 'sanctions',
+            'federal reserve', 'fed rate', 'interest rate', 'rate cut', 'rate hike',
+            'inflation', 'recession', 'gdp', 'jobs report', 'unemployment',
+            'pause', 'exemption', 'relief', 'stimulus', 'bailout',
+            'china', 'opec', 'oil price', 'treasury', 'yield curve',
         ]
         return any(kw in headline.lower() for kw in keywords)
