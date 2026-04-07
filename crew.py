@@ -59,10 +59,11 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     Execute one full analysis and trading cycle across the entire watchlist.
 
     Called by scheduler.py at each scheduled interval. Steps:
-        1. Circuit breaker check — halt immediately if portfolio is down ≥10%
-        2. Position monitor — close any positions that have exceeded their hold period
-        3. Per-ticker crew run — collect data → analyse → decide → size → execute
-        4. Persist run summary to logs
+        1. Position monitor — close any positions that have exceeded their hold period
+        2. Market reversal check — cover positions on wrong side of SPY move
+        3. Circuit breaker check — blocks new entries only; protection always runs first
+        4. Per-ticker crew run — collect data → analyse → decide → size → execute
+        5. Persist run summary to logs
 
     Args:
         circuit_breaker: Shared CircuitBreaker instance from scheduler.py.
@@ -72,23 +73,14 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     run_log = new_run_log(config.watchlist)
     start_time = datetime.now()
 
-    # ── Gate 1: Circuit Breaker ───────────────────────────────────────────────
-    # Fetch portfolio value first — required for both the breaker check and
-    # position sizing later in the cycle.
+    # ── Portfolio Value ───────────────────────────────────────────────────────
+    # Fetched first — required for both the circuit breaker check and position
+    # sizing later in the cycle.
     portfolio_value = executor.get_portfolio_value()
 
-    if not circuit_breaker.check(portfolio_value):
-        # Breaker has fired — log, record, and abort the entire cycle.
-        # No new positions should be opened until manual review clears the breaker.
-        print('🚨 Circuit breaker active — skipping trading cycle')
-        run_log.circuit_breaker_triggered = True
-        log_run(run_log)
-        return
-
-    # ── Gate 2: Hold Period Enforcement ──────────────────────────────────────
-    # Check all open positions for time-based expiry before analysing new ones.
-    # Closing stale positions first keeps max_positions headroom accurate for
-    # the portfolio task later in the cycle.
+    # ── Gate 1: Position Monitoring ───────────────────────────────────────────
+    # Protective exits always run regardless of circuit breaker state — these
+    # close existing risk, not open new positions.
     monitor = PositionMonitor(executor)
     monitor.check_all_positions()
     monitor.check_dynamic_exits()
@@ -113,6 +105,14 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                     )
                 except Exception as e:
                     log_error('market_reversal_close', trade['ticker'], str(e))
+
+    # ── Gate 2: Circuit Breaker ───────────────────────────────────────────────
+    # Only blocks new trade entries — position monitoring above always runs first.
+    if not circuit_breaker.check(portfolio_value):
+        print('🚨 Circuit breaker active — new entries blocked, position monitoring completed')
+        run_log.circuit_breaker_triggered = True
+        log_run(run_log)
+        return
 
     # Snapshot of open positions after any expired ones have been closed.
     # Passed to the portfolio task to enforce max_positions and duplicate checks.
