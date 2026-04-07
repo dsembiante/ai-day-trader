@@ -25,6 +25,7 @@ from agents import (
 from tasks import (
     create_bull_task, create_bear_task,
     create_risk_manager_task, create_portfolio_task,
+    create_exit_bull_task, create_exit_bear_task,
 )
 from models import TradeDecision
 from data_collector import DataCollector
@@ -122,6 +123,10 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     db_open_tickers     = {t['ticker'] for t in db.get_open_trades()}
     trades_executed = 0
 
+    # Direction counts — used by portfolio task to enforce same-direction cap
+    open_longs  = sum(1 for p in open_positions if float(p.get('qty', 0)) > 0)
+    open_shorts = sum(1 for p in open_positions if float(p.get('qty', 0)) < 0)
+
     # ── Market Regime Detection ───────────────────────────────────────────────
     # Detected once per cycle using SPY golden/death cross — shared across all
     # tickers so agents operate with consistent macro context. Position sizing
@@ -142,6 +147,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
         log_error('spy_intraday_check', 'SPY', str(e))
 
     print(f'📈 Market regime: {market_regime.upper()}')
+    print(f'📊 Open positions: {open_longs} longs, {open_shorts} shorts (max {config.max_same_direction_positions} per direction)')
 
     if market_regime == 'bear':
         print('🐻 Bear market detected — reducing position sizes and favoring shorts')
@@ -181,14 +187,108 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     risk_agent      = create_risk_manager()
     portfolio_agent = create_portfolio_manager()
 
+    # Build a lookup of open DB trades by ticker for exit evaluation
+    db_open_trades_by_ticker = {t['ticker']: t for t in db.get_open_trades()}
+
     # ── Per-Ticker Loop ───────────────────────────────────────────────────────
     for ticker in config.watchlist:
         try:
-            # Skip tickers already held in Alpaca or recorded open in the DB —
-            # avoids yfinance/Finnhub calls on positions we cannot add to anyway.
-            # Critical at 42 cycles/day. Both checks must remain before collect().
+            # ── Exit Re-evaluation for Held Positions ─────────────────────────
+            # If we hold this ticker, run a 1-agent exit evaluation before
+            # deciding whether to skip it for new entry analysis.
             if ticker in alpaca_held_tickers or ticker in db_open_tickers:
-                print(f'⏩ {ticker} — position already open (Alpaca or DB), skipping')
+                db_trade = db_open_trades_by_ticker.get(ticker)
+                trade_type = db_trade.get('trade_type', 'buy') if db_trade else 'buy'
+                entry_price = db_trade.get('entry_price', 0.0) if db_trade else 0.0
+                is_long = trade_type in ('buy', 'long')
+
+                print(f'\n🔄 Re-evaluating open position: {ticker} ({trade_type})')
+
+                try:
+                    market_data = collector.collect(ticker)
+                    if not market_data.data_sources_used.alpaca:
+                        print(f'⚠️  No price data for {ticker} — skipping exit evaluation')
+                        continue
+
+                    exit_summary = f'''
+                        Ticker: {ticker}
+                        Price: ${market_data.current_price:.2f}
+                        Volume: {market_data.volume:,}
+
+                        VWAP Analysis:
+                        VWAP: {f'${market_data.vwap:.2f}' if market_data.vwap else 'N/A'}
+                        Price above VWAP: {market_data.price_above_vwap if market_data.price_above_vwap is not None else 'N/A'}
+
+                        Opening Range Breakout:
+                        ORB breakout up: {market_data.orb_breakout_up if market_data.orb_breakout_up is not None else 'N/A'}
+                        ORB breakdown: {market_data.orb_breakout_down if market_data.orb_breakout_down is not None else 'N/A'}
+
+                        Gap Analysis:
+                        Pre-market gap: {f'{market_data.gap_pct:.2f}%' if market_data.gap_pct is not None else 'N/A'}
+                        Bullish gap: {market_data.gap_is_bullish if market_data.gap_is_bullish is not None else 'N/A'}
+                        Bearish gap: {market_data.gap_is_bearish if market_data.gap_is_bearish is not None else 'N/A'}
+
+                        Volume:
+                        Volume ratio vs 20-day avg: {f'{market_data.volume_ratio:.2f}x' if market_data.volume_ratio else 'N/A'}
+                        Volume confirmed: {market_data.volume_confirmed if market_data.volume_confirmed is not None else 'N/A'}
+
+                        RSI: {f'{market_data.rsi:.1f}' if market_data.rsi else 'N/A'}
+                        MACD: {f'{market_data.macd:.4f}' if market_data.macd else 'N/A'}
+                        Market Regime: {market_regime.upper()}
+                        VIX: {f'{market_data.vix:.1f}' if market_data.vix is not None else 'N/A'}
+                    '''
+
+                    exit_task = (
+                        create_exit_bull_task(bull_agent, ticker, exit_summary, entry_price)
+                        if is_long else
+                        create_exit_bear_task(bear_agent, ticker, exit_summary, entry_price)
+                    )
+                    exit_agent = bull_agent if is_long else bear_agent
+
+                    exit_crew = Crew(
+                        agents=[exit_agent],
+                        tasks=[exit_task],
+                        process=Process.sequential,
+                        verbose=False,
+                    )
+                    exit_result = exit_crew.kickoff()
+
+                    # Parse exit decision
+                    if hasattr(exit_result, 'json_dict') and exit_result.json_dict:
+                        exit_data = exit_result.json_dict
+                    else:
+                        raw = exit_result.raw if hasattr(exit_result, 'raw') else str(exit_result)
+                        raw = raw.strip()
+                        if raw.startswith('```'):
+                            raw = raw.split('\n', 1)[-1]
+                        if raw.endswith('```'):
+                            raw = raw.rsplit('```', 1)[0]
+                        exit_data = json.loads(raw.strip())
+
+                    should_exit = exit_data.get('exit', False)
+                    exit_confidence = float(exit_data.get('confidence', 0.0))
+                    exit_reasoning = exit_data.get('reasoning', '')
+
+                    if should_exit and exit_confidence >= 0.75:
+                        print(f'✅ Agent recommends EXIT {ticker} — {exit_reasoning}')
+                        executor.close_position(ticker, trade_type)
+                        import time as _time; _time.sleep(2)
+                        exit_price_filled = executor.get_filled_exit_price(ticker)
+                        if db_trade:
+                            db.update_trade_status(
+                                db_trade['trade_id'],
+                                status='closed',
+                                exit_reason='agent_exit_recommendation',
+                                exit_price=exit_price_filled,
+                            )
+                    else:
+                        print(f'⏸️  Agent recommends HOLD {ticker} — {exit_reasoning}')
+
+                except Exception as e:
+                    log_error('exit_evaluation', ticker, str(e))
+                    print(f'❌ Exit evaluation error for {ticker}: {e}')
+
+                # Always skip new entry analysis for held tickers regardless of exit outcome
                 continue
 
             print(f'\n📊 Analyzing {ticker}...')
@@ -255,7 +355,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
             bull_task      = create_bull_task(bull_agent, ticker, summary)
             bear_task      = create_bear_task(bear_agent, ticker, summary)
             risk_task      = create_risk_manager_task(risk_agent, ticker, bull_task, bear_task)
-            portfolio_task = create_portfolio_task(portfolio_agent, ticker, risk_task, open_positions)
+            portfolio_task = create_portfolio_task(portfolio_agent, ticker, risk_task, open_positions, open_longs, open_shorts)
 
             # ── Crew Execution ────────────────────────────────────────────────
             # Process.sequential runs tasks in order: bull → bear → risk → portfolio.
@@ -462,7 +562,9 @@ def run_single_ticker(ticker: str, headline: str, position_multiplier: float = 1
         risk_task      = create_risk_manager_task(risk_agent, ticker, bull_task, bear_task)
 
         open_positions = executor.get_open_positions()
-        portfolio_task = create_portfolio_task(portfolio_agent, ticker, risk_task, open_positions)
+        news_open_longs  = sum(1 for p in open_positions if float(p.get('qty', 0)) > 0)
+        news_open_shorts = sum(1 for p in open_positions if float(p.get('qty', 0)) < 0)
+        portfolio_task = create_portfolio_task(portfolio_agent, ticker, risk_task, open_positions, news_open_longs, news_open_shorts)
 
         crew = Crew(
             agents=[bull_agent, bear_agent, risk_agent, portfolio_agent],

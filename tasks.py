@@ -245,7 +245,8 @@ def create_risk_manager_task(agent, ticker: str, bull_task: Task, bear_task: Tas
     )
 
 
-def create_portfolio_task(agent, ticker: str, risk_task: Task, open_positions: list) -> Task:
+def create_portfolio_task(agent, ticker: str, risk_task: Task, open_positions: list,
+                          open_longs: int = 0, open_shorts: int = 0) -> Task:
     """
     Final portfolio-level gate before a trade decision reaches the executor.
 
@@ -253,6 +254,8 @@ def create_portfolio_task(agent, ticker: str, risk_task: Task, open_positions: l
         1. Max positions cap — blocks entry if the portfolio is already at max
         2. Duplicate position check — prevents doubling up on the same ticker
         3. Sector concentration — flags over-exposure to a single sector
+        4. Multi-signal confirmation — requires at least 2 confirming signals
+        5. Direction concentration — blocks entry if same-direction cap is reached
 
     The agent is instructed to pass the TradeDecision through unchanged if
     all checks pass, or flip execute=false with an explanation in
@@ -266,6 +269,8 @@ def create_portfolio_task(agent, ticker: str, risk_task: Task, open_positions: l
         risk_task:      The risk manager task whose output is passed as context.
         open_positions: Current open positions list from TradeExecutor.get_open_positions(),
                         used to populate the prompt with live portfolio state.
+        open_longs:     Count of currently open long positions.
+        open_shorts:    Count of currently open short positions.
 
     Returns:
         A configured Task that receives the risk manager output as context.
@@ -275,6 +280,7 @@ def create_portfolio_task(agent, ticker: str, risk_task: Task, open_positions: l
             You are the Portfolio Manager reviewing the trade decision for {ticker}.
             Current open positions: {len(open_positions)} of {config.max_positions} maximum.
             Open tickers: {[p['ticker'] for p in open_positions]}
+            Open longs: {open_longs} | Open shorts: {open_shorts} | Max per direction: {config.max_same_direction_positions}
 
             Review the risk manager decision from context.
             If execute=true, verify ALL of the following:
@@ -283,6 +289,9 @@ def create_portfolio_task(agent, ticker: str, risk_task: Task, open_positions: l
             3. Adding this position does not over-concentrate in one sector
             4. Multi-signal confirmation: the analyst reasoning mentions at least 2 confirming signals
                (look for "2/4", "3/4", or "4/4" in key_factors — if only "1/4" is present, set execute=false)
+            5. Direction concentration: if the proposed trade is buy/long and open_longs ({open_longs}) already equals {config.max_same_direction_positions}, set execute=false.
+               If the proposed trade is short/sell and open_shorts ({open_shorts}) already equals {config.max_same_direction_positions}, set execute=false.
+               Note "max same-direction positions reached" in risk_manager_reasoning if this fires.
 
             If condition 4 fails, set execute=false and note "insufficient signal confirmation" in risk_manager_reasoning.
             Return the same TradeDecision JSON from context, but set execute=false
@@ -292,4 +301,108 @@ def create_portfolio_task(agent, ticker: str, risk_task: Task, open_positions: l
         expected_output='JSON matching TradeDecision schema, approved or rejected',
         agent=agent,
         context=[risk_task],  # Portfolio manager sees only the risk manager's final decision
+    )
+
+
+# ── Exit Evaluation Tasks ─────────────────────────────────────────────────────
+
+def create_exit_bull_task(agent, ticker: str, market_data_summary: str, entry_price: float) -> Task:
+    """
+    Task for evaluating whether to EXIT an existing long position.
+
+    Asks the bull agent whether the original bullish thesis still holds.
+    Returns a simple exit/hold decision — not a new entry decision.
+
+    Args:
+        agent:               The bull CrewAI agent instance.
+        ticker:              Symbol of the held position.
+        market_data_summary: Pre-formatted market data string from crew.py.
+        entry_price:         Original entry price for unrealized P&L context.
+
+    Returns:
+        A configured Task producing a JSON exit decision.
+    """
+    return Task(
+        description=f'''
+            You are evaluating whether to EXIT an existing LONG position in {ticker}.
+            Original entry price: ${entry_price:.2f}
+
+            Current market data:
+            {market_data_summary}
+
+            Evaluate whether the BULLISH thesis that justified this long position still holds.
+            Check these exit signals:
+            - Price below VWAP: intraday momentum has turned bearish → EXIT signal
+            - ORB breakdown (orb_breakout_down=True): confirmed bearish break → EXIT signal
+            - Bearish gap: day opened with bearish bias → EXIT signal
+            - Volume on down move (volume_ratio > 1.20 while price declining) → EXIT signal
+
+            Count how many exit signals are present (0-4).
+            IMPORTANT: Recommend EXIT (sell) if 2 or more exit signals are present.
+            Recommend HOLD if fewer than 2 exit signals are present.
+
+            You MUST return a JSON object with these exact fields:
+            - ticker: '{ticker}'
+            - exit: true or false
+            - trade_type: 'sell' (if exit=true) or 'hold' (if exit=false)
+            - confidence: float between 0.0 and 1.0
+            - reasoning: your analysis including signal count (minimum 50 characters)
+            - key_factors: list of exit signals that fired
+
+            Only recommend exit=true if confidence >= 0.75.
+            Be concise — keep reasoning under 3 sentences.
+        ''',
+        expected_output='JSON object with ticker, exit, trade_type, confidence, reasoning, key_factors',
+        agent=agent,
+    )
+
+
+def create_exit_bear_task(agent, ticker: str, market_data_summary: str, entry_price: float) -> Task:
+    """
+    Task for evaluating whether to EXIT an existing short position.
+
+    Asks the bear agent whether the original bearish thesis still holds.
+    Returns a simple exit/hold decision — not a new entry decision.
+
+    Args:
+        agent:               The bear CrewAI agent instance.
+        ticker:              Symbol of the held position.
+        market_data_summary: Pre-formatted market data string from crew.py.
+        entry_price:         Original entry price for unrealized P&L context.
+
+    Returns:
+        A configured Task producing a JSON exit decision.
+    """
+    return Task(
+        description=f'''
+            You are evaluating whether to EXIT an existing SHORT position in {ticker}.
+            Original entry price: ${entry_price:.2f}
+
+            Current market data:
+            {market_data_summary}
+
+            Evaluate whether the BEARISH thesis that justified this short position still holds.
+            Check these cover signals (reasons the short thesis has broken down):
+            - Price above VWAP: intraday momentum has turned bullish → COVER signal
+            - ORB breakout up (orb_breakout_up=True): confirmed bullish break → COVER signal
+            - Bullish gap: day opened with bullish bias → COVER signal
+            - Volume on up move (volume_ratio > 1.20 while price rising) → COVER signal
+
+            Count how many cover signals are present (0-4).
+            IMPORTANT: Recommend COVER (exit short) if 2 or more cover signals are present.
+            Recommend HOLD if fewer than 2 cover signals are present.
+
+            You MUST return a JSON object with these exact fields:
+            - ticker: '{ticker}'
+            - exit: true or false
+            - trade_type: 'cover' (if exit=true) or 'hold' (if exit=false)
+            - confidence: float between 0.0 and 1.0
+            - reasoning: your analysis including signal count (minimum 50 characters)
+            - key_factors: list of cover signals that fired
+
+            Only recommend exit=true if confidence >= 0.75.
+            Be concise — keep reasoning under 3 sentences.
+        ''',
+        expected_output='JSON object with ticker, exit, trade_type, confidence, reasoning, key_factors',
+        agent=agent,
     )

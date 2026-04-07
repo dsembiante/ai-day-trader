@@ -103,6 +103,7 @@ class Config(BaseModel):
     confidence_threshold: float = 0.82  # Minimum agent confidence score to enter a trade
     max_positions: int = 15             # Maximum concurrent open positions
     min_signals_required: int = 2       # Minimum agreeing signals before executing a trade
+    max_same_direction_positions: int = 4  # Max concurrent longs OR shorts at one time
 
     # ── Hold Period Exit Rules ────────────────────────────────────────────────
     # Each hold period tier has independent stop-loss, take-profit, and time limits.

@@ -127,20 +127,35 @@ class PositionMonitor:
                     exit_reason = 'dynamic_time_profit'
                     print(f'⏱️ {ticker} 2h+ with {gain_pct*100:.2f}% gain — freeing capital')
 
+            # Fetch VWAP once per ticker — used by conditions 3 and 5
+            vwap_val = price_above_vwap = None
+            try:
+                vwap_val, price_above_vwap = collector.get_vwap(ticker)
+            except Exception as e:
+                log_error('dynamic_exit_vwap', ticker, str(e))
+
             # Condition 3: VWAP cross against long position
             if exit_reason is None and is_long:
-                try:
-                    vwap, price_above_vwap = collector.get_vwap(ticker)
-                    if vwap is not None and price_above_vwap is False:
-                        exit_reason = 'vwap_cross_exit'
-                        print(f'📉 {ticker} dropped below VWAP ({vwap:.2f}) — exiting long')
-                except Exception as e:
-                    log_error('dynamic_exit_vwap', ticker, str(e))
+                if vwap_val is not None and price_above_vwap is False:
+                    exit_reason = 'vwap_cross_exit'
+                    print(f'📉 {ticker} dropped below VWAP ({vwap_val:.2f}) — exiting long')
 
             # Condition 4: SPY broad market reversal — exit all longs
             if exit_reason is None and is_long and spy_reversal:
                 exit_reason = 'spy_reversal_exit'
                 print(f'🚨 {ticker} closed: SPY intraday reversal > 1.5%')
+
+            # Condition 5: loss > 1.5% + VWAP momentum reversal against position
+            if exit_reason is None and vwap_val is not None:
+                market_value = alpaca_pos.get('market_value')
+                if market_value and abs(market_value) > 0:
+                    loss_pct = unrealized_pl / abs(market_value)
+                    if is_long and loss_pct < -0.015 and price_above_vwap is False:
+                        exit_reason = 'loss_vwap_reversal'
+                        print(f'🛑 {ticker} loss-based exit: {loss_pct*100:.1f}% loss + VWAP reversal — cutting position')
+                    elif not is_long and loss_pct < -0.015 and price_above_vwap is True:
+                        exit_reason = 'loss_vwap_reversal'
+                        print(f'🛑 {ticker} loss-based exit: {loss_pct*100:.1f}% loss + VWAP reversal — cutting position')
 
             if exit_reason:
                 try:
