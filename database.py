@@ -45,7 +45,13 @@ class Database:
         """
         Idempotently create the database schema using IF NOT EXISTS guards.
         Safe to call on every startup — existing data is never modified.
+
+        Schema creation and column migrations are committed in separate
+        transactions so a failed migration cannot abort the CREATE TABLE
+        statements (critical for PostgreSQL on Railway where a failed DDL
+        inside a transaction poisons all subsequent commands in that block).
         """
+        # ── Step 1: Core schema — committed independently ─────────────────────
         with self.conn.cursor() as cur:
             cur.execute('''
                 CREATE TABLE IF NOT EXISTS trades (
@@ -64,7 +70,7 @@ class Database:
                     take_profit_price       REAL,
                     pnl                     REAL,
                     pnl_pct                 REAL,
-                    status                  TEXT DEFAULT \'open\',
+                    status                  TEXT DEFAULT 'open',
                     exit_reason             TEXT,
                     confidence_at_entry     REAL,
                     bull_reasoning          TEXT,
@@ -77,11 +83,6 @@ class Database:
                     exit_time               TEXT
                 )
             ''')
-            # Migration: add atr_pct to existing databases that predate this column
-            try:
-                cur.execute('ALTER TABLE trades ADD COLUMN atr_pct REAL')
-            except Exception:
-                pass  # Column already exists — safe to ignore
             cur.execute('''
                 CREATE TABLE IF NOT EXISTS daily_performance (
                     id                          SERIAL PRIMARY KEY,
@@ -107,6 +108,21 @@ class Database:
                 )
             ''')
         self.conn.commit()
+
+        # ── Step 2: Column migrations — each in its own isolated transaction ──
+        # Uses information_schema to check existence before ALTER TABLE so
+        # PostgreSQL never sees a failing DDL that would abort the transaction.
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'trades' AND column_name = 'atr_pct'
+                """)
+                if not cur.fetchone():
+                    cur.execute("ALTER TABLE trades ADD COLUMN atr_pct REAL")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()  # Isolated — schema tables already committed above
 
     # ── Write Operations ──────────────────────────────────────────────────────
 
