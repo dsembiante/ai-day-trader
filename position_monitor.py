@@ -112,10 +112,23 @@ class PositionMonitor:
             if entry_price and entry_price > 0 and shares > 0:
                 gain_pct = unrealized_pl / (entry_price * shares)
 
+            # ATR-tiered profit threshold — uses live ATR% from data pipeline
+            atr_pct = trade.get('atr_pct')
+            if atr_pct is None or atr_pct == 0:
+                profit_threshold = 2.0
+                print(f'⚠️ ATR% unavailable for {ticker} — using default 2.0% profit threshold')
+            elif atr_pct < 2.0:
+                profit_threshold = 1.5   # Low volatility: AAPL, SPY, QQQ
+            elif atr_pct <= 3.5:
+                profit_threshold = 2.0   # Medium volatility: META, AMZN, NVDA
+            else:
+                profit_threshold = 2.5   # High volatility: TSLA, AMD
+            print(f'💰 Profit threshold for {ticker} (ATR%: {atr_pct:.2f}%): {profit_threshold:.1f}%' if atr_pct else f'💰 Profit threshold for {ticker}: {profit_threshold:.1f}% (no ATR)')
+
             exit_reason = None
 
-            # Condition 1: gain > 2.5% — early take-profit
-            if gain_pct is not None and gain_pct > 0.025:
+            # Condition 1: gain exceeds ATR-tiered threshold — early take-profit
+            if gain_pct is not None and gain_pct > profit_threshold / 100:
                 exit_reason = 'dynamic_take_profit'
                 print(f'💰 {ticker} dynamic take-profit: {gain_pct*100:.2f}% gain')
 

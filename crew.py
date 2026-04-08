@@ -492,6 +492,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                         'risk_manager_reasoning': decision.risk_manager_reasoning,
                         'hold_period_reasoning':  decision.hold_period_reasoning,
                         'data_sources_available': str(market_data.data_sources_used.model_dump()),
+                        'atr_pct':                market_data.atr_pct,  # Stored for ATR-tiered exit logic
                         'entry_time':             datetime.now().isoformat(),
                         'exit_time':              None,       # Populated at close
                     }
@@ -703,6 +704,7 @@ def run_single_ticker(ticker: str, headline: str, position_multiplier: float = 1
                     'risk_manager_reasoning': decision.risk_manager_reasoning,
                     'hold_period_reasoning':  decision.hold_period_reasoning,
                     'data_sources_available': str(market_data.data_sources_used.model_dump()),
+                    'atr_pct':                market_data.atr_pct,  # Stored for ATR-tiered exit logic
                     'entry_time':             datetime.now().isoformat(),
                     'exit_time':              None,
                 }

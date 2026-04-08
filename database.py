@@ -72,10 +72,16 @@ class Database:
                     risk_manager_reasoning  TEXT,
                     hold_period_reasoning   TEXT,
                     data_sources_available  TEXT,
+                    atr_pct                 REAL,
                     entry_time              TEXT,
                     exit_time               TEXT
                 )
             ''')
+            # Migration: add atr_pct to existing databases that predate this column
+            try:
+                cur.execute('ALTER TABLE trades ADD COLUMN atr_pct REAL')
+            except Exception:
+                pass  # Column already exists — safe to ignore
             cur.execute('''
                 CREATE TABLE IF NOT EXISTS daily_performance (
                     id                          SERIAL PRIMARY KEY,
