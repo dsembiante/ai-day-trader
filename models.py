@@ -159,7 +159,7 @@ class TradeDecision(BaseModel):
     execute: bool  # Master switch — False means the cycle produced no actionable signal
 
     trade_type: Optional[TradeType] = None           # None when execute=False
-    order_type: OrderType = OrderType.LIMIT           # Limit orders by default to control slippage
+    order_type: Optional[OrderType] = OrderType.LIMIT  # None acceptable when execute=False
     hold_period: HoldPeriod = HoldPeriod.SWING        # Default to swing if unspecified
     confidence: float = Field(..., ge=0.0, le=1.0)
 
