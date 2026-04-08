@@ -376,7 +376,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
             # the LLM sometimes wraps around its JSON response — json.loads
             # cannot handle the backtick markers.
             if hasattr(result, 'json_dict') and result.json_dict:
-                decision = TradeDecision(**result.json_dict)
+                raw_dict = result.json_dict
             else:
                 raw = result.raw if hasattr(result, 'raw') else str(result)
                 # Remove markdown code fences if present
@@ -385,8 +385,43 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                     raw = raw.split('\n', 1)[-1]  # Drop the opening ```[json] line
                 if raw.endswith('```'):
                     raw = raw.rsplit('```', 1)[0]  # Drop the closing ``` line
-                raw = raw.strip()
-                decision = TradeDecision(**json.loads(raw))
+                raw_dict = json.loads(raw.strip())
+
+            # ── Safety Override: enforce Risk Manager hierarchy ────────────────
+            # The Portfolio Manager is forbidden from flipping execute=false to
+            # execute=true. Extract the Risk Manager's decision from its task
+            # output and override the portfolio result if it tried to flip it.
+            # Also normalise any hallucinated trade_type='long' → 'buy'.
+            _VALID_TRADE_TYPES = {'buy', 'sell', 'short', 'cover'}
+            if isinstance(raw_dict.get('trade_type'), str):
+                if raw_dict['trade_type'] not in _VALID_TRADE_TYPES:
+                    raw_dict['trade_type'] = None  # Will be caught downstream
+
+            risk_execute = None
+            try:
+                risk_out = risk_task.output
+                if hasattr(risk_out, 'json_dict') and risk_out.json_dict:
+                    risk_execute = risk_out.json_dict.get('execute')
+                elif hasattr(risk_out, 'raw') and risk_out.raw:
+                    _r = risk_out.raw.strip()
+                    if _r.startswith('```'):
+                        _r = _r.split('\n', 1)[-1]
+                    if _r.endswith('```'):
+                        _r = _r.rsplit('```', 1)[0]
+                    risk_execute = json.loads(_r.strip()).get('execute')
+            except Exception:
+                pass  # If we can't read the risk task output, leave override logic to prompt
+
+            if risk_execute is False and raw_dict.get('execute') is True:
+                print(f'⚠️  Safety override: Portfolio Manager attempted to flip execute=false to execute=true for {ticker} — blocked')
+                raw_dict['execute']           = False
+                raw_dict['trade_type']        = None
+                raw_dict['entry_price']       = None
+                raw_dict['stop_loss_price']   = None
+                raw_dict['take_profit_price'] = None
+                raw_dict['position_size_usd'] = None
+
+            decision = TradeDecision(**raw_dict)
 
             # ── Decision Post-Processing ──────────────────────────────────────
             # If the agent omitted entry_price (returns null for market orders),
@@ -576,10 +611,42 @@ def run_single_ticker(ticker: str, headline: str, position_multiplier: float = 1
 
         # Parse decision — same dual-path fallback as run_trading_cycle()
         if hasattr(result, 'json_dict') and result.json_dict:
-            decision = TradeDecision(**result.json_dict)
+            raw_dict = result.json_dict
         else:
             raw = result.raw if hasattr(result, 'raw') else str(result)
-            decision = TradeDecision(**json.loads(raw))
+            raw_dict = json.loads(raw)
+
+        # Safety override — same hierarchy enforcement as run_trading_cycle()
+        _VALID_TRADE_TYPES = {'buy', 'sell', 'short', 'cover'}
+        if isinstance(raw_dict.get('trade_type'), str):
+            if raw_dict['trade_type'] not in _VALID_TRADE_TYPES:
+                raw_dict['trade_type'] = None
+
+        risk_execute = None
+        try:
+            risk_out = risk_task.output
+            if hasattr(risk_out, 'json_dict') and risk_out.json_dict:
+                risk_execute = risk_out.json_dict.get('execute')
+            elif hasattr(risk_out, 'raw') and risk_out.raw:
+                _r = risk_out.raw.strip()
+                if _r.startswith('```'):
+                    _r = _r.split('\n', 1)[-1]
+                if _r.endswith('```'):
+                    _r = _r.rsplit('```', 1)[0]
+                risk_execute = json.loads(_r.strip()).get('execute')
+        except Exception:
+            pass
+
+        if risk_execute is False and raw_dict.get('execute') is True:
+            print(f'⚠️  Safety override: Portfolio Manager attempted to flip execute=false to execute=true for {ticker} — blocked')
+            raw_dict['execute']           = False
+            raw_dict['trade_type']        = None
+            raw_dict['entry_price']       = None
+            raw_dict['stop_loss_price']   = None
+            raw_dict['take_profit_price'] = None
+            raw_dict['position_size_usd'] = None
+
+        decision = TradeDecision(**raw_dict)
 
         # ── Position Sizing & Execution ───────────────────────────────────────
         if decision.execute and decision.trade_type:

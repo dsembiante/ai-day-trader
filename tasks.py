@@ -282,6 +282,10 @@ def create_portfolio_task(agent, ticker: str, risk_task: Task, open_positions: l
             Open tickers: {[p['ticker'] for p in open_positions]}
             Open longs: {open_longs} | Open shorts: {open_shorts} | Max per direction: {config.max_same_direction_positions}
 
+            CRITICAL PASSTHROUGH RULE: If the Risk Manager's decision has execute=false, you MUST return that exact JSON unchanged. You are absolutely forbidden from changing execute from false to true. You are absolutely forbidden from inventing entry_price, stop_loss_price, take_profit_price, or position_size_usd values. Your only job when execute=false is to pass the decision through unmodified.
+
+            VALID trade_type values are ONLY: 'buy', 'sell', 'short', 'cover'. Never use 'long', 'hold', or any other value.
+
             Review the risk manager decision from context.
             If execute=true, verify ALL of the following:
             1. We have not exceeded max positions ({config.max_positions})
