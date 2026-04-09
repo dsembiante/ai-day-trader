@@ -27,6 +27,7 @@ Deploy on Railway:
 
 import schedule, time, threading
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from crew import run_trading_cycle, run_single_ticker
 from report_generator import generate_daily_report
 from circuit_breaker import CircuitBreaker
@@ -41,6 +42,10 @@ from news_monitor import NewsMonitor
 # its peak value from disk at instantiation and updates it in memory on each
 # check, minimising file I/O while preserving state across scheduled runs.
 cb = CircuitBreaker()
+
+# Tracks the last date the morning stale-order cleanup ran so it fires exactly
+# once per trading day (first cycle that passes market_is_open()).
+_last_cleanup_date = None
 
 
 # ── Market Hours Guard ────────────────────────────────────────────────────────
@@ -85,9 +90,26 @@ def run_cycle():
     the shared circuit breaker so the crew can halt before placing orders
     if the breaker has fired. Exceptions are caught here rather than in the
     crew to ensure the scheduler loop itself never crashes.
+
+    On the first cycle of each trading day, runs a stale-order cleanup before
+    any analysis to ensure no orders from the prior session survive overnight.
     """
+    global _last_cleanup_date
+
     if not market_is_open():
         return  # Silent skip — expected on weekends / holidays
+
+    # Morning stale-order cleanup — runs exactly once on the first cycle of each
+    # trading day, before any analysis or order placement.
+    et_today = datetime.now(ZoneInfo('America/New_York')).date()
+    if _last_cleanup_date != et_today:
+        print(f'🧹 First cycle of {et_today} — running morning stale order cleanup')
+        try:
+            from trade_executor import TradeExecutor
+            TradeExecutor().cancel_stale_orders()
+        except Exception as e:
+            print(f'[morning_cleanup] stale order cancel failed: {e}')
+        _last_cleanup_date = et_today
 
     print(f'{datetime.now()} — Starting trading cycle ({config.run_mode})')
     try:

@@ -241,6 +241,50 @@ class TradeExecutor:
             log_error('cancel_open_orders', ticker, str(e))
             print(f'[cancel_orders] {ticker} — order fetch/cancel failed: {e}')
 
+    def cancel_stale_orders(self) -> int:
+        """
+        Cancel all open orders submitted before today's 9:30 AM ET market open.
+
+        Called once at the start of the first trading cycle each day to ensure
+        no close orders, bracket legs, or limit orders from the prior session
+        survive into the new trading day. Alpaca's default TIF for close_position()
+        is 'day', so normal EOD closes expire automatically — this is a safety
+        net for edge cases (e.g. orders submitted in the final seconds of the
+        session, partial fills, or bracket legs that weren't cancelled cleanly).
+
+        Returns:
+            Number of orders cancelled (0 on failure or nothing to cancel).
+        """
+        from zoneinfo import ZoneInfo
+        et_tz = ZoneInfo('America/New_York')
+        et_now = datetime.now(et_tz)
+        today_open = et_now.replace(hour=9, minute=30, second=0, microsecond=0)
+
+        try:
+            request = GetOrdersRequest(status=QueryOrderStatus.OPEN)
+            open_orders = self.client.get_orders(filter=request)
+            cancelled = 0
+            for order in open_orders:
+                submitted_at = order.submitted_at  # UTC-aware datetime from Alpaca
+                if submitted_at and submitted_at < today_open:
+                    ticker   = order.symbol
+                    side     = str(order.side).split('.')[-1].lower()
+                    otype    = str(order.type).split('.')[-1].lower()
+                    try:
+                        self.client.cancel_order_by_id(order.id)
+                        print(
+                            f'🧹 Stale order cancelled: {ticker} {side} {otype} '
+                            f'submitted {submitted_at}'
+                        )
+                        cancelled += 1
+                    except Exception as e:
+                        log_error('cancel_stale_order', ticker, str(e))
+            print(f'🧹 Morning cleanup: {cancelled} stale orders cancelled')
+            return cancelled
+        except Exception as e:
+            log_error('cancel_stale_orders', 'ALL', str(e))
+            return 0
+
     def close_position(self, ticker: str, trade_type: str):
         """
         Close a single open position at market price.
