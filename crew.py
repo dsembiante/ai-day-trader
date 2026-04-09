@@ -77,6 +77,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     # weekdays only) to prevent pre-market or after-hours order submission.
     et_now = datetime.now(ZoneInfo('America/New_York'))
     market_open  = time(9, 30)
+    orb_cutoff   = time(10, 0)   # ORB formation window — no new entries before 10:00 AM ET
     market_close = time(15, 45)
     if et_now.weekday() >= 5 or not (market_open <= et_now.time() <= market_close):
         print(f'⏰ Outside market hours ({et_now.strftime("%a %H:%M ET")}) — skipping trading cycle')
@@ -470,6 +471,16 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 else:
                     print(f'⚠️  ATR unavailable for {ticker} — using fixed stops')
 
+                # ORB gate — block ALL new entries before 10:00 AM ET regardless
+                # of trade_type. The Risk Manager prompt states this rule but the
+                # LLM can ignore it; this hard gate enforces it unconditionally.
+                if et_now.time() < orb_cutoff:
+                    print(
+                        f'⏰ {ticker} — ORB gate: no entries before 10:00 AM ET '
+                        f'({et_now.strftime("%H:%M ET")}), skipping {decision.trade_type}'
+                    )
+                    continue
+
                 # Submit the bracket order to Alpaca
                 order_result = executor.execute_trade(decision)
                 print(f'[order_result] {ticker}: {order_result}')
@@ -685,6 +696,16 @@ def run_single_ticker(ticker: str, headline: str, position_multiplier: float = 1
             else:
                 print(f'⚠️  ATR unavailable for {ticker} — using fixed stops')
             decision.max_hold_days      = sizer.get_max_hold_days(hold)
+
+            # ORB gate — applies to news-triggered trades as well as scheduled cycles.
+            # Block ALL new entries before 10:00 AM ET regardless of trade_type.
+            _et_now_news = datetime.now(ZoneInfo('America/New_York'))
+            if _et_now_news.time() < time(10, 0):
+                print(
+                    f'⏰ {ticker} (news) — ORB gate: no entries before 10:00 AM ET '
+                    f'({_et_now_news.strftime("%H:%M ET")}), skipping {decision.trade_type}'
+                )
+                return
 
             order_result = executor.execute_trade(decision)
             print(f'[order_result] {ticker}: {order_result}')
