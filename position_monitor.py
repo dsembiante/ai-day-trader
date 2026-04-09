@@ -371,7 +371,28 @@ class PositionMonitor:
                         continue  # Skip force-close — position stays open as swing
 
             try:
-                self.executor.close_position(ticker, trade['trade_type'])
+                # Determine closing direction from the live Alpaca position side,
+                # not the trade record — bracket fills can change the effective side.
+                alpaca_pos = alpaca_positions.get(ticker)
+                position_side = 'long'  # Default; overridden below when data is available
+                if alpaca_pos:
+                    side_val = alpaca_pos.get('side')
+                    # Alpaca SDK returns PositionSide enum; compare string repr
+                    if side_val and str(side_val).lower() in ('short', 'positionside.short'):
+                        position_side = 'short'
+                    elif float(alpaca_pos.get('qty', 0)) < 0:
+                        position_side = 'short'
+
+                print(
+                    f'🔴 EOD closing {position_side} position: {ticker} — '
+                    f"placing {'sell' if position_side == 'long' else 'buy-to-cover'}"
+                )
+
+                # Cancel open bracket legs first to avoid Alpaca error 40310000,
+                # then close_position() — Alpaca handles both long (sell) and
+                # short (buy-to-cover) correctly from the same API call.
+                self.executor._cancel_open_orders(ticker)
+                self.executor.client.close_position(ticker)
 
                 # Wait for Alpaca to record the fill before querying order history
                 time.sleep(2)

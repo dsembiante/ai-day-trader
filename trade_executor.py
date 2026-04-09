@@ -24,8 +24,9 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import (
     MarketOrderRequest, LimitOrderRequest,
     StopOrderRequest, TakeProfitRequest, StopLossRequest,
+    GetOrdersRequest,
 )
-from alpaca.trading.enums import OrderSide, TimeInForce, OrderType
+from alpaca.trading.enums import OrderSide, TimeInForce, OrderType, QueryOrderStatus
 from config import config
 from logger import log_error
 from models import TradeDecision
@@ -213,30 +214,47 @@ class TradeExecutor:
 
     # ── Position Closing ──────────────────────────────────────────────────────
 
+    def _cancel_open_orders(self, ticker: str):
+        """
+        Cancel all open orders for a symbol using the correct Alpaca SDK v2 pattern.
+
+        cancel_orders_for_symbol() does not exist in the SDK. Instead, fetch open
+        orders filtered by symbol and cancel each one individually. Errors on
+        individual cancellations are logged but do not abort the loop.
+        """
+        try:
+            request = GetOrdersRequest(
+                status=QueryOrderStatus.OPEN,
+                symbols=[ticker],
+            )
+            open_orders = self.client.get_orders(filter=request)
+            for order in open_orders:
+                try:
+                    self.client.cancel_order_by_id(order.id)
+                except Exception as e:
+                    log_error('cancel_order_by_id', ticker, str(e))
+                    print(f'[cancel_orders] {ticker} — could not cancel order {order.id}: {e}')
+            if open_orders:
+                print(f'[cancel_orders] {ticker} — cancelled {len(open_orders)} open order(s)')
+                time.sleep(1)  # Give Alpaca a moment to process cancellations
+        except Exception as e:
+            log_error('cancel_open_orders', ticker, str(e))
+            print(f'[cancel_orders] {ticker} — order fetch/cancel failed: {e}')
+
     def close_position(self, ticker: str, trade_type: str):
         """
         Close a single open position at market price.
 
-        Called by position_monitor.py for hold period expiry and intraday
-        forced closes. Alpaca automatically cancels any open bracket legs
-        (take-profit / stop-loss) when the position is closed this way.
+        Cancels all open bracket legs first (take-profit / stop-loss) to avoid
+        Alpaca error 40310000 where shares are held for open orders and cannot
+        be liquidated directly.
 
         Args:
             ticker:     Symbol of the position to close.
             trade_type: Included for logging context; not used by Alpaca directly.
         """
         try:
-            # Cancel all open orders (bracket legs) before closing the position.
-            # Alpaca error 40310000 occurs when shares are held for open bracket
-            # orders — cancelling first releases the hold so the close can proceed.
-            try:
-                self.client.cancel_orders_for_symbol(ticker)
-                print(f'[close_position] {ticker} — bracket orders cancelled')
-                time.sleep(1)
-            except Exception as cancel_err:
-                log_error('cancel_orders', ticker, str(cancel_err))
-                print(f'[close_position] {ticker} — order cancellation failed: {cancel_err}')
-
+            self._cancel_open_orders(ticker)
             self.client.close_position(ticker)
             print(f'✅ Position closed: {ticker}')
         except Exception as e:

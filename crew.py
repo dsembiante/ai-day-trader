@@ -36,7 +36,8 @@ from circuit_breaker import CircuitBreaker
 from database import Database
 from logger import log_error, log_trade, new_run_log, log_run
 from config import config, HoldPeriod
-from datetime import datetime
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
 import json
 import uuid
 import yfinance as yf
@@ -71,6 +72,16 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                          Passed in (rather than instantiated here) so the peak
                          value high-water mark persists across cycles.
     """
+    # ── Market Hours Gate ─────────────────────────────────────────────────────
+    # Reject cycles outside regular trading hours (9:30 AM – 3:45 PM ET,
+    # weekdays only) to prevent pre-market or after-hours order submission.
+    et_now = datetime.now(ZoneInfo('America/New_York'))
+    market_open  = time(9, 30)
+    market_close = time(15, 45)
+    if et_now.weekday() >= 5 or not (market_open <= et_now.time() <= market_close):
+        print(f'⏰ Outside market hours ({et_now.strftime("%a %H:%M ET")}) — skipping trading cycle')
+        return
+
     run_log = new_run_log(config.watchlist)
     start_time = datetime.now()
 
