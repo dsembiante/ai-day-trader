@@ -83,9 +83,7 @@ class PositionSizer:
             'pct_of_portfolio': round(position_usd / portfolio_value * 100, 2),
         }
 
-    # ── ATR-based stop/target caps (intraday only) ────────────────────────────
-    _ATR_STOP_MIN  = 0.005   # 0.5% — floor: never tigher than bid/ask noise
-    _ATR_STOP_MAX  = 0.05    # 5.0% — ceiling: max intraday risk per trade
+    # ── ATR-based take-profit caps (intraday only) ───────────────────────────
     _ATR_TARGET_MIN = 0.01   # 1.0% — floor on take-profit
     _ATR_TARGET_MAX = 0.10   # 10.0% — ceiling on take-profit
 
@@ -94,9 +92,17 @@ class PositionSizer:
         """
         Calculate the stop-loss price for a position.
 
-        For INTRADAY trades with a valid atr_pct, uses 1.5 × ATR% as the stop
-        distance (capped between 0.5% and 5%). Falls back to the fixed config
-        percentage for non-intraday holds or when ATR is unavailable.
+        For INTRADAY trades, uses ATR-tiered fixed percentages calibrated to
+        ~2× the corresponding time-tiered profit target, maintaining a 2:1
+        risk/reward ratio aligned with position_monitor.get_profit_threshold():
+
+            ATR < 2.0% → 0.70% stop  (2× the 0.35% low-vol profit target)
+            ATR < 3.5% → 1.00% stop  (2× the 0.50% med-vol profit target)
+            ATR ≥ 3.5% → 1.25% stop  (2× the ~0.625% high-vol profit target)
+
+        When ATR is unavailable for intraday trades, falls back to 1.00%
+        (the medium-tier default). Non-intraday holds use the fixed config
+        percentages unchanged.
 
         Args:
             entry:      Fill price at trade entry.
@@ -108,23 +114,42 @@ class PositionSizer:
         Returns:
             Stop-loss price rounded to 2 decimal places.
         """
-        if hold == HoldPeriod.INTRADAY and atr_pct is not None and atr_pct > 0:
-            raw_stop = (atr_pct / 100) * 1.5
-            pct = max(self._ATR_STOP_MIN, min(self._ATR_STOP_MAX, raw_stop))
-            # Caller prints the combined ATR log line after both calls return
-            self._last_atr_stop_pct   = pct
+        if hold == HoldPeriod.INTRADAY:
+            if atr_pct is not None and atr_pct > 0:
+                # Tiered fixed percentages — ~2× the time-tiered profit target
+                if atr_pct < 2.0:
+                    pct = 0.0070   # 0.70% — 2× the 0.35% low-vol profit target
+                elif atr_pct < 3.5:
+                    pct = 0.0100   # 1.00% — 2× the 0.50% med-vol profit target
+                else:
+                    pct = 0.0125   # 1.25% — 2× the ~0.625% high-vol profit target
+                self._last_atr_stop_pct = pct
+            else:
+                # ATR unavailable — use medium-tier default rather than wide config fallback
+                pct = 0.0100
+                self._last_atr_stop_pct = None  # Signals fixed-stop path to caller
+                if ticker:
+                    print(f'⚠️  ATR unavailable for {ticker} — using fallback 1.00% intraday stop')
         else:
             pct = {
-                HoldPeriod.INTRADAY: config.intraday_stop_loss_pct,
                 HoldPeriod.SWING:    config.swing_stop_loss_pct,
                 HoldPeriod.POSITION: config.position_stop_loss_pct,
             }.get(hold, config.swing_stop_loss_pct)
             self._last_atr_stop_pct = None  # Signals fixed-stop path to caller
 
         type_str = trade_type.value if hasattr(trade_type, 'value') else str(trade_type)
-        if type_str in ('buy', 'long'):
-            return round(entry * (1 - pct), 2)  # Stop below entry for longs
-        return round(entry * (1 + pct), 2)       # Stop above entry for shorts
+        is_long = type_str in ('buy', 'long')
+        if is_long:
+            stop_price = round(entry * (1 - pct), 2)
+        else:
+            stop_price = round(entry * (1 + pct), 2)
+
+        if hold == HoldPeriod.INTRADAY and ticker:
+            direction = 'below' if is_long else 'above'
+            atr_str = f', ATR: {atr_pct:.1f}%' if atr_pct else ''
+            print(f'🛡️  {ticker} stop loss set at ${stop_price:.2f} ({pct*100:.2f}% {direction} entry ${entry:.2f}{atr_str})')
+
+        return stop_price
 
     def get_take_profit(self, entry: float, trade_type: str, hold: HoldPeriod,
                         atr_pct: float = None, ticker: str = '') -> float:
