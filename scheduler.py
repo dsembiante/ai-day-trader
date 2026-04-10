@@ -63,7 +63,7 @@ def market_is_open() -> bool:
         True  — current time is within Monday–Friday 9:30 AM–4:00 PM window.
         False — outside market hours; cycle should be skipped.
     """
-    now = datetime.now()
+    now = datetime.now(ZoneInfo('America/New_York'))
 
     # weekday(): Monday=0 … Sunday=6; skip Saturday (5) and Sunday (6)
     if now.weekday() >= 5:
