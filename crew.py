@@ -38,6 +38,7 @@ from logger import log_error, log_trade, new_run_log, log_run
 from config import config, HoldPeriod
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
+from macro_calendar import check_high_impact_day
 import json
 import uuid
 import yfinance as yf
@@ -189,6 +190,18 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
         vix_regime = 'NORMAL'
         config.confidence_threshold = 0.82
         print('⚠️  VIX unavailable — defaulting to NORMAL regime, confidence threshold 0.82')
+
+    # ── Economic Calendar Check ───────────────────────────────────────────────
+    # Checked once per day (result cached to data/cache/macro_events_YYYYMMDD.json).
+    # On CPI, NFP, GDP, PPI, or FOMC days: raise confidence threshold to at least
+    # 0.87 and block all new entries until 10:30 AM ET — the additional 30 minutes
+    # beyond the standard ORB window reduces exposure to gap-and-reverse patterns
+    # that are most common immediately after high-impact releases.
+    is_high_impact, macro_event = check_high_impact_day()
+    high_impact_cutoff = time(10, 30)
+    if is_high_impact:
+        config.confidence_threshold = max(config.confidence_threshold, 0.87)
+        print(f'⚠️  HIGH IMPACT MACRO DAY: {macro_event} — confidence threshold raised to {config.confidence_threshold}')
 
     # ── Agent Instantiation ───────────────────────────────────────────────────
     # Agents are created once per cycle (not per ticker) and reused.
@@ -481,6 +494,15 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                     )
                     continue
 
+                # High-impact macro day gate — extends the entry blackout to 10:30 AM ET
+                # on CPI/NFP/GDP/PPI/FOMC days to avoid gap-and-reverse fills.
+                if is_high_impact and et_now.time() < high_impact_cutoff:
+                    print(
+                        f'⚠️  {ticker} — High-impact day ({macro_event}): entries blocked until '
+                        f'10:30 AM ET ({et_now.strftime("%H:%M ET")}), skipping {decision.trade_type}'
+                    )
+                    continue
+
                 # Submit the bracket order to Alpaca
                 order_result = executor.execute_trade(decision)
                 print(f'[order_result] {ticker}: {order_result}')
@@ -706,6 +728,18 @@ def run_single_ticker(ticker: str, headline: str, position_multiplier: float = 1
                     f'({_et_now_news.strftime("%H:%M ET")}), skipping {decision.trade_type}'
                 )
                 return
+
+            # High-impact macro day gate — same 10:30 AM ET cutoff as main cycle.
+            # Also raises the confidence threshold for this news-triggered trade.
+            _is_high_impact, _macro_event = check_high_impact_day()
+            if _is_high_impact:
+                config.confidence_threshold = max(config.confidence_threshold, 0.87)
+                if _et_now_news.time() < time(10, 30):
+                    print(
+                        f'⚠️  {ticker} (news) — High-impact day ({_macro_event}): entries blocked until '
+                        f'10:30 AM ET ({_et_now_news.strftime("%H:%M ET")}), skipping {decision.trade_type}'
+                    )
+                    return
 
             order_result = executor.execute_trade(decision)
             print(f'[order_result] {ticker}: {order_result}')
