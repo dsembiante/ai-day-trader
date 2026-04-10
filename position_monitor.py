@@ -28,6 +28,41 @@ from datetime import datetime, timedelta
 from logger import log_error
 
 
+def get_profit_threshold(atr_pct, minutes_held: float) -> float:
+    """
+    Return the minimum gain % (as a plain percentage, e.g. 1.5 means 1.5%)
+    required to trigger a dynamic take-profit exit.
+
+    Two-axis logic:
+        - Fresh positions (< 30 min): use full ATR-tiered targets so the
+          position has room to reach its original bracket take-profit.
+        - Aging positions (30 min+): lower the bar progressively so
+          unrealised gains don't reverse back to breakeven or a loss.
+
+    Args:
+        atr_pct:      ATR as a percentage of price (e.g. 2.3 means 2.3%).
+                      Pass 0 or None to receive the medium-volatility default.
+        minutes_held: Minutes elapsed since entry.
+
+    Returns:
+        Profit threshold as a percentage float.
+    """
+    if minutes_held < 30:
+        # Fresh position — let it run to the full ATR-calibrated target
+        if not atr_pct or atr_pct < 2.0:
+            return 1.5   # Low volatility: AAPL, MSFT, JPM
+        elif atr_pct < 3.5:
+            return 2.0   # Medium volatility: META, AMZN, NVDA
+        else:
+            return 2.5   # High volatility: TSLA, AMD, COIN
+    elif minutes_held < 60:
+        return 0.5       # 30–60 min held — lock in a solid half-percent gain
+    elif minutes_held < 90:
+        return 0.35      # 60–90 min held — take any meaningful gain
+    else:
+        return 0.25      # 90+ min held — take any gain above noise floor
+
+
 class PositionMonitor:
     """
     Audits open positions on every cycle and triggers time-based exits.
@@ -112,28 +147,42 @@ class PositionMonitor:
             if entry_price and entry_price > 0 and shares > 0:
                 gain_pct = unrealized_pl / (entry_price * shares)
 
-            # ATR-tiered profit threshold — uses live ATR% from data pipeline
+            # Time-and-ATR-tiered profit threshold — combines ATR volatility regime
+            # with how long the position has been open. Fresh positions must hit
+            # the full ATR target; aging positions lower the bar to lock in gains
+            # before they reverse.
             atr_pct = trade.get('atr_pct')
-            if atr_pct is None or atr_pct == 0:
-                profit_threshold = 2.0
-                print(f'⚠️ ATR% unavailable for {ticker} — using default 2.0% profit threshold')
-            elif atr_pct < 2.0:
-                profit_threshold = 1.5   # Low volatility: AAPL, SPY, QQQ
-            elif atr_pct <= 3.5:
-                profit_threshold = 2.0   # Medium volatility: META, AMZN, NVDA
+            entry_time_str = trade.get('entry_time')
+            if entry_time_str:
+                try:
+                    entry_dt = datetime.fromisoformat(entry_time_str)
+                    minutes_held = (datetime.now() - entry_dt).total_seconds() / 60
+                except Exception:
+                    minutes_held = 0.0
             else:
-                profit_threshold = 2.5   # High volatility: TSLA, AMD
-            print(f'💰 Profit threshold for {ticker} (ATR%: {atr_pct:.2f}%): {profit_threshold:.1f}%' if atr_pct else f'💰 Profit threshold for {ticker}: {profit_threshold:.1f}% (no ATR)')
+                minutes_held = 0.0
+
+            profit_threshold = get_profit_threshold(atr_pct, minutes_held)
 
             exit_reason = None
 
-            # Condition 1: gain exceeds ATR-tiered threshold — early take-profit
-            if gain_pct is not None and gain_pct > profit_threshold / 100:
-                exit_reason = 'dynamic_take_profit'
-                print(f'💰 {ticker} dynamic take-profit: {gain_pct*100:.2f}% gain')
+            # Condition 1: gain exceeds time-and-ATR-tiered threshold — dynamic take-profit
+            if gain_pct is not None:
+                gain_display = f'{gain_pct * 100:+.2f}%'
+                if gain_pct > profit_threshold / 100:
+                    exit_reason = 'dynamic_take_profit'
+                    print(
+                        f'⏱️  {ticker} held {minutes_held:.0f}min — profit threshold: {profit_threshold:.2f}% '
+                        f'(current gain: {gain_display}) — ABOVE threshold, exiting'
+                    )
+                else:
+                    print(
+                        f'⏱️  {ticker} held {minutes_held:.0f}min — profit threshold: {profit_threshold:.2f}% '
+                        f'(current gain: {gain_display}) — BELOW threshold, holding'
+                    )
 
             # Condition 2: open > 2 hours AND gain > 1% — free the capital
-            elif gain_pct is not None and gain_pct > 0.01:
+            if exit_reason is None and gain_pct is not None and gain_pct > 0.01:
                 entry_time = datetime.fromisoformat(trade['entry_time'])
                 hours_open = (datetime.now() - entry_time).total_seconds() / 3600
                 if hours_open >= 2.0:
