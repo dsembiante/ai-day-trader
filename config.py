@@ -110,7 +110,7 @@ class Config(BaseModel):
     # The position_monitor.py module enforces these on every monitoring cycle.
 
     # Intraday — exits same day; tight stops to limit overnight gap risk
-    intraday_stop_loss_pct: float = 0.02
+    intraday_stop_loss_pct: float = 0.01
     intraday_take_profit_pct: float = 0.04
     intraday_max_days: int = 1
 
