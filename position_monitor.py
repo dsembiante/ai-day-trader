@@ -441,7 +441,7 @@ class PositionMonitor:
                 # then close_position() — Alpaca handles both long (sell) and
                 # short (buy-to-cover) correctly from the same API call.
                 self.executor._cancel_open_orders(ticker)
-                time.sleep(1)  # Wait for cancellation to propagate before placing close
+                time.sleep(2)  # Wait for cancellation to propagate before placing close
                 self.executor.client.close_position(ticker)
 
                 # Wait for Alpaca to record the fill before querying order history

@@ -106,7 +106,9 @@ def run_cycle():
         print(f'🧹 First cycle of {et_today} — running morning stale order cleanup')
         try:
             from trade_executor import TradeExecutor
-            TradeExecutor().cancel_stale_orders()
+            executor = TradeExecutor()
+            executor.cancel_stale_orders()
+            executor.close_stale_intraday_positions()
         except Exception as e:
             print(f'[morning_cleanup] stale order cancel failed: {e}')
         _last_cleanup_date = et_today

@@ -285,6 +285,73 @@ class TradeExecutor:
             log_error('cancel_stale_orders', 'ALL', str(e))
             return 0
 
+    def close_stale_intraday_positions(self) -> int:
+        """
+        Close any intraday positions that survived overnight due to a failed EOD close.
+
+        Called once at market open after cancel_stale_orders(). Compares open DB trades
+        with hold_period='intraday' against live Alpaca positions. Any match means the
+        EOD forced-close failed (e.g. error 40310000) and the position was held overnight
+        against the intraday rule. These are closed immediately at market open.
+
+        Returns:
+            Number of stale intraday positions closed (0 if none found or on failure).
+        """
+        from database import Database
+        db = Database()
+
+        try:
+            open_trades = db.get_open_trades()
+        except Exception as e:
+            log_error('close_stale_intraday_positions', 'ALL', str(e))
+            return 0
+
+        intraday = [t for t in open_trades if t.get('hold_period') == 'intraday']
+        if not intraday:
+            print('🧹 Morning cleanup: no stale intraday positions found')
+            return 0
+
+        # Compare against live Alpaca positions — only act on confirmed live holds
+        live_positions = {p['ticker']: p for p in self.get_open_positions()}
+        closed = 0
+
+        for trade in intraday:
+            ticker = trade['ticker']
+            if ticker not in live_positions:
+                # DB says open but Alpaca has no position — mark as closed in DB
+                print(f'⚠️  {ticker} intraday trade open in DB but no Alpaca position — marking closed')
+                try:
+                    db.update_trade_status(
+                        trade['trade_id'],
+                        status='closed',
+                        exit_reason='stale_intraday_no_position',
+                        exit_price=None,
+                    )
+                except Exception as e:
+                    log_error('close_stale_intraday_positions', ticker, str(e))
+                continue
+
+            print(f'⚠️  Stale intraday position found at market open: {ticker} — closing now')
+            try:
+                self._cancel_open_orders(ticker)
+                time.sleep(2)
+                self.client.close_position(ticker)
+                time.sleep(2)
+                exit_price = self.get_filled_exit_price(ticker)
+                db.update_trade_status(
+                    trade['trade_id'],
+                    status='closed',
+                    exit_reason='stale_intraday_morning_close',
+                    exit_price=exit_price,
+                )
+                print(f'✅ Stale intraday position closed at market open: {ticker}')
+                closed += 1
+            except Exception as e:
+                log_error('close_stale_intraday_positions', ticker, str(e))
+
+        print(f'🧹 Morning cleanup: {closed} stale intraday position(s) closed')
+        return closed
+
     def close_position(self, ticker: str, trade_type: str):
         """
         Close a single open position at market price.
