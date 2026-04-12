@@ -96,9 +96,9 @@ class PositionSizer:
         ~2× the corresponding time-tiered profit target, maintaining a 2:1
         risk/reward ratio aligned with position_monitor.get_profit_threshold():
 
-            ATR < 2.0% → 0.70% stop  (2× the 0.35% low-vol profit target)
-            ATR < 3.5% → 1.00% stop  (2× the 0.50% med-vol profit target)
-            ATR ≥ 3.5% → 1.25% stop  (2× the ~0.625% high-vol profit target)
+            ATR < 2.0% → 0.70% stop  (2× the 0.35% 30–60 min profit target)
+            ATR < 3.5% → 1.00% stop  (≈2× the 0.35–0.25% aging profit targets)
+            ATR ≥ 3.5% → 1.25% stop  (wider cushion for high-vol names)
 
         When ATR is unavailable for intraday trades, falls back to 1.00%
         (the medium-tier default). Non-intraday holds use the fixed config
@@ -118,11 +118,11 @@ class PositionSizer:
             if atr_pct is not None and atr_pct > 0:
                 # Tiered fixed percentages — ~2× the time-tiered profit target
                 if atr_pct < 2.0:
-                    pct = 0.0070   # 0.70% — 2× the 0.35% low-vol profit target
+                    pct = 0.0070   # 0.70% — 2× the 0.35% 30–60 min profit target
                 elif atr_pct < 3.5:
-                    pct = 0.0100   # 1.00% — 2× the 0.50% med-vol profit target
+                    pct = 0.0100   # 1.00% — wider cushion for med-vol names
                 else:
-                    pct = 0.0125   # 1.25% — 2× the ~0.625% high-vol profit target
+                    pct = 0.0125   # 1.25% — wider cushion for high-vol names
                 self._last_atr_stop_pct = pct
             else:
                 # ATR unavailable — use medium-tier default rather than wide config fallback

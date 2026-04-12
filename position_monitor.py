@@ -56,11 +56,11 @@ def get_profit_threshold(atr_pct, minutes_held: float) -> float:
         else:
             return 2.5   # High volatility: TSLA, AMD, COIN
     elif minutes_held < 60:
-        return 0.5       # 30–60 min held — lock in a solid half-percent gain
+        return 0.35      # 30–60 min held — take any gain above 0.35%
     elif minutes_held < 90:
-        return 0.35      # 60–90 min held — take any meaningful gain
+        return 0.25      # 60–90 min held — take any gain above 0.25%
     else:
-        return 0.25      # 90+ min held — take any gain above noise floor
+        return 0.20      # 90+ min held — take any gain above 0.20%
 
 
 class PositionMonitor:
