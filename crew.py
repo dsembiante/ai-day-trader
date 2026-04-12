@@ -97,6 +97,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     # close existing risk, not open new positions.
     monitor = PositionMonitor(executor)
     print(f'[position_monitor] Running checks on {len(executor.get_open_positions())} open positions...')
+    monitor.reconcile_bracket_exits()
     monitor.check_all_positions()
     monitor.check_dynamic_exits()
 

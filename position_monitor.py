@@ -77,6 +77,61 @@ class PositionMonitor:
 
     # ── Public Interface ──────────────────────────────────────────────────────
 
+    def reconcile_bracket_exits(self):
+        """
+        Detect positions closed by Alpaca bracket fills and record them in the DB.
+
+        When a bracket take-profit or stop-loss leg fires, Alpaca closes the
+        position with no callback to our code — the trade row stays status='open'
+        forever and never appears in P&L or win-rate metrics.
+
+        This method compares every DB-open trade against live Alpaca positions.
+        Any DB-open trade whose ticker has no live Alpaca position is presumed
+        closed by a bracket fill; the exit price is fetched from Alpaca's order
+        history and the row is written to closed with pnl computed.
+
+        Called at the start of every scheduler cycle (before check_all_positions)
+        so the DB stays in sync with actual Alpaca state within one cycle.
+        """
+        open_trades = self.db.get_open_trades()
+        if not open_trades:
+            return
+
+        live_positions = {p['ticker'] for p in self.executor.get_open_positions()}
+
+        for trade in open_trades:
+            ticker = trade['ticker']
+            if ticker in live_positions:
+                continue  # Position still open — nothing to reconcile
+
+            # Position gone from Alpaca — bracket leg fired or external close
+            exit_price  = self.executor.get_filled_exit_price(ticker)
+            entry_price = trade.get('entry_price')
+            take_profit = trade.get('take_profit_price')
+            stop_loss   = trade.get('stop_loss_price')
+            is_long     = trade.get('trade_type', 'buy') in ('buy', 'long')
+
+            # Classify the exit by which bracket level the fill price is closest to
+            exit_reason = 'bracket_fill'
+            if exit_price and take_profit and stop_loss:
+                dist_tp = abs(exit_price - take_profit)
+                dist_sl = abs(exit_price - stop_loss)
+                exit_reason = 'bracket_take_profit' if dist_tp < dist_sl else 'bracket_stop_loss'
+
+            print(
+                f'🔄 Reconciling {ticker}: no live Alpaca position — '
+                f'recording {exit_reason} at ${exit_price}'
+            )
+            try:
+                self.db.update_trade_status(
+                    trade['trade_id'],
+                    status='closed',
+                    exit_reason=exit_reason,
+                    exit_price=exit_price,
+                )
+            except Exception as e:
+                log_error('reconcile_bracket_exits', ticker, str(e))
+
     def check_all_positions(self):
         """
         Retrieve all open trades from the database and evaluate each one

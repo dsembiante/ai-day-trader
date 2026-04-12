@@ -156,12 +156,37 @@ class Database:
 
         Called by trade_executor.py (stop/take-profit fills) and
         position_monitor.py (hold period expiry, intraday forced close).
+
+        When exit_price is provided, computes pnl and pnl_pct from the stored
+        entry_price, shares, and trade_type so the dashboard and reports always
+        have accurate P&L figures without requiring callers to calculate it.
         """
+        pnl = None
+        pnl_pct = None
+
+        if exit_price is not None:
+            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    'SELECT entry_price, shares, trade_type FROM trades WHERE trade_id=%s',
+                    (trade_id,)
+                )
+                row = cur.fetchone()
+            if row:
+                entry_price = row['entry_price']
+                shares      = row['shares']
+                trade_type  = row.get('trade_type', 'buy') or 'buy'
+                if entry_price and shares and entry_price > 0 and shares > 0:
+                    is_long = trade_type in ('buy', 'long')
+                    pnl     = (exit_price - entry_price) * shares if is_long \
+                              else (entry_price - exit_price) * shares
+                    pnl_pct = pnl / (entry_price * shares)
+
         with self.conn.cursor() as cur:
             cur.execute(
-                'UPDATE trades SET status=%s, exit_reason=%s, exit_price=%s, exit_time=%s '
-                'WHERE trade_id=%s',
-                (status, exit_reason, exit_price, datetime.now().isoformat(), trade_id)
+                'UPDATE trades SET status=%s, exit_reason=%s, exit_price=%s, '
+                'pnl=%s, pnl_pct=%s, exit_time=%s WHERE trade_id=%s',
+                (status, exit_reason, exit_price, pnl, pnl_pct,
+                 datetime.now().isoformat(), trade_id)
             )
         self.conn.commit()
 
@@ -230,16 +255,21 @@ class Database:
         with self.conn.cursor() as cur:
             cur.execute(
                 "SELECT COUNT(*), SUM(pnl), AVG(pnl), "
-                "SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) "
+                "SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), "
+                "SUM(CASE WHEN pnl > 0 THEN pnl ELSE 0 END), "
+                "SUM(CASE WHEN pnl < 0 THEN ABS(pnl) ELSE 0 END) "
                 "FROM trades WHERE status='closed'"
             )
             row = cur.fetchone()
-        total = row[0] or 0
+        total      = row[0] or 0
+        gross_win  = row[4] or 0
+        gross_loss = row[5] or 0
         return {
-            'total_trades': total,
-            'total_pnl':    row[1] or 0,
-            'avg_pnl':      row[2] or 0,
-            'win_rate':     (row[3] / total) if total > 0 else 0,
+            'total_trades':  total,
+            'total_pnl':     row[1] or 0,
+            'avg_pnl':       row[2] or 0,
+            'win_rate':      (row[3] / total) if total > 0 else 0,
+            'profit_factor': (gross_win / gross_loss) if gross_loss > 0 else 0,
         }
 
     def get_circuit_breaker_peak(self):
