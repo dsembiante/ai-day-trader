@@ -221,8 +221,19 @@ class PositionMonitor:
 
             exit_reason = None
 
+            # Time-based loss exit — cut losing positions early before the bracket fires.
+            # Triggers only after 20 min held AND position is down 0.50%+.
+            # gain_pct is already directionally correct for both longs and shorts
+            # (Alpaca unrealized_pl is negative when losing regardless of side).
+            if gain_pct is not None and minutes_held >= 20 and gain_pct <= -0.005:
+                exit_reason = 'time_loss_exit'
+                print(
+                    f'⏱️ {ticker} held {minutes_held:.0f}min at {gain_pct*100:.2f}% '
+                    f'— time-based loss exit triggered, cutting position'
+                )
+
             # Condition 1: gain exceeds time-and-ATR-tiered threshold — dynamic take-profit
-            if gain_pct is not None:
+            if exit_reason is None and gain_pct is not None:
                 gain_display = f'{gain_pct * 100:+.2f}%'
                 if gain_pct > profit_threshold / 100:
                     exit_reason = 'dynamic_take_profit'
