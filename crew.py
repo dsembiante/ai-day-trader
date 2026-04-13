@@ -44,6 +44,28 @@ import uuid
 import yfinance as yf
 
 
+# ── Session Momentum Helpers ─────────────────────────────────────────────────
+
+def _get_session_phase(et_now: datetime) -> str:
+    t = et_now.time()
+    if t < time(11, 0):
+        return 'morning'
+    elif t < time(13, 0):
+        return 'midday'
+    else:
+        return 'afternoon'
+
+
+def _get_vwap_margin_pct(price: float, vwap: float) -> float:
+    """Return how far price is above/below VWAP as a percentage."""
+    return (price - vwap) / vwap * 100
+
+
+def _get_price_vs_orb_high(price: float, orb_high: float) -> float:
+    """Return current price distance from ORB high as a percentage."""
+    return (price - orb_high) / orb_high * 100
+
+
 # ── Module-Level Singletons ───────────────────────────────────────────────────
 # Instantiated once at import time and reused for every ticker across all
 # scheduler cycles within the process lifetime. This avoids opening new
@@ -373,6 +395,11 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 News headlines: {market_data.news_headlines[:5]}
                 Macro context: {market_data.macro_context or 'N/A'}
                 Data sources available: {market_data.data_sources_used.model_dump()}
+
+                Session Momentum Filter:
+                Session phase: {_get_session_phase(et_now)}
+                VWAP margin %: {f'{_get_vwap_margin_pct(market_data.current_price, market_data.vwap):.2f}%' if market_data.vwap and market_data.current_price else 'N/A'}
+                Price vs ORB high %: {f'{_get_price_vs_orb_high(market_data.current_price, market_data.opening_range_high):.2f}%' if market_data.opening_range_high and market_data.current_price else 'N/A'}
             '''
 
             # ── Task Creation ─────────────────────────────────────────────────

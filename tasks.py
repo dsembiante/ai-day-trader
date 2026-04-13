@@ -237,6 +237,15 @@ def create_risk_manager_task(agent, ticker: str, bull_task: Task, bear_task: Tas
             - VIX below 15 (LOW): Small intraday moves expected. Raise confidence threshold to 0.87 — only the strongest setups are worth trading.
             - VIX 15-25 (NORMAL): Proceed with standard confidence threshold of 0.82.
 
+            TIME-OF-DAY MOMENTUM FILTER — morning momentum window closes at 11 AM ET:
+            - If session_phase is 'morning': no additional restrictions — proceed with standard signal evaluation.
+            - If session_phase is 'midday' or 'afternoon':
+              - Only execute BUY if vwap_margin_pct > 0.30% (price clearly above VWAP, not just hovering).
+              - Only execute BUY if price_vs_orb_high % is within 1% above the ORB high (near breakout) OR price is making new intraday highs (orb_breakout_up is True).
+              - If neither VWAP nor ORB condition is met, set execute=false.
+              - Morning momentum window is closing — only the strongest setups are worth entering after 11 AM.
+              - Valid exceptions: pullback-to-VWAP entries (price just crossed back above VWAP with volume confirmation) and genuine ORB breakouts are still valid at any time of day.
+
             Be concise — keep all reasoning fields under 2 sentences each.
         ''',
         expected_output='JSON object with ticker, execute, trade_type, order_type, hold_period, confidence, position_size_usd, entry_price, stop_loss_price, take_profit_price, max_hold_days, bull_reasoning, bear_reasoning, risk_manager_reasoning, hold_period_reasoning',
