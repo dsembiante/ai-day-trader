@@ -360,8 +360,9 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
 
             # ── Late-Day Entry Gate ───────────────────────────────────────────
             # Hard block on all new entries after 2:45 PM ET — mirrors the ORB
-            # gate pattern. Position monitoring continues; only new entries stop.
-            if et_now.time() >= entry_cutoff:
+            # gate pattern. Re-checks current time per ticker rather than using
+            # the cycle-start snapshot (et_now) which can be stale on long cycles.
+            if datetime.now(ZoneInfo('America/New_York')).time() >= entry_cutoff:
                 print(f'⛔ Past 2:45 PM ET — no new entries in final 65 minutes of trading')
                 continue
 
