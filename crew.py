@@ -339,6 +339,24 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 # Always skip new entry analysis for held tickers regardless of exit outcome
                 continue
 
+            # ── Loss Cooloff Gate ─────────────────────────────────────────────
+            # If the most recent closed trade for this ticker today was a loss,
+            # skip re-entry until loss_cooloff_minutes have elapsed. Prevents
+            # walking back into the same bearish conditions that just stopped us out.
+            last_trade = db.get_last_closed_trade(ticker)
+            if last_trade and last_trade.get('pnl') is not None and last_trade['pnl'] < 0:
+                try:
+                    exit_dt = datetime.fromisoformat(last_trade['exit_time'])
+                    minutes_since_exit = (datetime.now() - exit_dt).total_seconds() / 60
+                    if minutes_since_exit < config.loss_cooloff_minutes:
+                        print(
+                            f'⏸️ {ticker} — 30min cooloff after loss exit '
+                            f'({minutes_since_exit:.0f}min ago) — skipping'
+                        )
+                        continue
+                except Exception:
+                    pass  # Malformed exit_time — allow evaluation to proceed
+
             print(f'\n📊 Analyzing {ticker}...')
 
             # ── Data Collection ───────────────────────────────────────────────

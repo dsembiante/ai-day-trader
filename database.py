@@ -226,6 +226,27 @@ class Database:
             cur.execute("SELECT * FROM trades WHERE status='open'")
             return [dict(row) for row in cur.fetchall()]
 
+    def get_last_closed_trade(self, ticker: str) -> dict | None:
+        """
+        Return the most recent closed trade for a ticker today, or None if none exists.
+        Used by crew.py to enforce the loss cooloff period before re-entering a ticker.
+        """
+        today = datetime.now().date().isoformat()
+        with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT pnl, exit_time FROM trades
+                WHERE ticker = %s
+                  AND status = 'closed'
+                  AND DATE(exit_time) = %s
+                ORDER BY exit_time DESC
+                LIMIT 1
+                """,
+                (ticker, today),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
     def get_performance_by_hold_period(self) -> dict:
         """
         Aggregate closed trade statistics broken out by hold period tier.
