@@ -78,6 +78,9 @@ class PositionMonitor:
         # Keyed by trade_id; each value is [older_price, last_price] (oldest first).
         # Reset on process restart — only needs to persist across scheduler cycles.
         self._price_history: dict = {}
+        # In-memory peak gain tracking for trailing profit protection.
+        # Keyed by trade_id; value is the highest gain_pct seen since entry (as a fraction).
+        self._peak_gain_pct: dict = {}
 
     # ── Public Interface ──────────────────────────────────────────────────────
 
@@ -211,6 +214,12 @@ class PositionMonitor:
             if entry_price and entry_price > 0 and shares > 0:
                 gain_pct = unrealized_pl / (entry_price * shares)
 
+            # Update peak gain — track the highest gain% seen for this trade
+            trade_id = trade['trade_id']
+            if gain_pct is not None:
+                if gain_pct > self._peak_gain_pct.get(trade_id, float('-inf')):
+                    self._peak_gain_pct[trade_id] = gain_pct
+
             # Time-and-ATR-tiered profit threshold — combines ATR volatility regime
             # with how long the position has been open. Fresh positions must hit
             # the full ATR target; aging positions lower the bar to lock in gains
@@ -233,7 +242,6 @@ class PositionMonitor:
             # Momentum fade detection — two consecutive declining cycles while below entry.
             # For longs: fade = price dropped each of the last 2 cycles AND below entry.
             # For shorts: fade = price rose each of the last 2 cycles AND above entry.
-            trade_id = trade['trade_id']
             if exit_reason is None and current_price is not None and entry_price and minutes_held >= 10:
                 history = self._price_history.get(trade_id, [])
                 if len(history) >= 2:
@@ -262,6 +270,20 @@ class PositionMonitor:
                     f'⏱️ {ticker} held {minutes_held:.0f}min at {gain_pct*100:.2f}% '
                     f'— time-based loss exit triggered, cutting position'
                 )
+
+            # Peak profit trailing exit — protect gains that have pulled back significantly.
+            # Only activates once peak has reached 0.25%; exits if pullback from peak >= 0.15%.
+            # Runs before the tiered threshold so a reversing winner exits immediately.
+            if exit_reason is None and gain_pct is not None:
+                peak = self._peak_gain_pct.get(trade_id, 0.0)
+                if peak >= 0.0025:
+                    pullback = peak - gain_pct
+                    if pullback >= 0.0015:
+                        exit_reason = 'peak_pullback_exit'
+                        print(
+                            f'📈 {ticker} peak was +{peak*100:.2f}% now +{gain_pct*100:.2f}% '
+                            f'— pulled back {pullback*100:.2f}% from peak — exiting to protect profits'
+                        )
 
             # Condition 1: gain exceeds time-and-ATR-tiered threshold — dynamic take-profit
             if exit_reason is None and gain_pct is not None:
@@ -330,9 +352,10 @@ class PositionMonitor:
                 except Exception as e:
                     log_error('dynamic_exit', ticker, str(e))
 
-        # Clean up price history for positions that are no longer open
+        # Clean up in-memory dicts for positions that are no longer open
         active_ids = {t['trade_id'] for t in open_trades}
-        self._price_history = {k: v for k, v in self._price_history.items() if k in active_ids}
+        self._price_history  = {k: v for k, v in self._price_history.items()  if k in active_ids}
+        self._peak_gain_pct  = {k: v for k, v in self._peak_gain_pct.items()  if k in active_ids}
 
     def check_market_reversal(self) -> 'str | None':
         """
