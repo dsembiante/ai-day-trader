@@ -74,6 +74,10 @@ class PositionMonitor:
         # Executor is injected rather than instantiated here to share the
         # same authenticated Alpaca client used by the rest of the crew
         self.executor = trade_executor
+        # In-memory price history for momentum fade detection.
+        # Keyed by trade_id; each value is [older_price, last_price] (oldest first).
+        # Reset on process restart — only needs to persist across scheduler cycles.
+        self._price_history: dict = {}
 
     # ── Public Interface ──────────────────────────────────────────────────────
 
@@ -197,6 +201,11 @@ class PositionMonitor:
             entry_price = trade.get('entry_price')
             shares = trade.get('shares') or 0
 
+            # Derive current price from Alpaca position — market_value / qty works
+            # for both longs (both positive) and shorts (both negative)
+            raw_qty = alpaca_pos.get('qty') or 0
+            current_price = abs(alpaca_pos['market_value']) / abs(raw_qty) if raw_qty != 0 else None
+
             # Unrealized gain % from entry; None when entry data is missing
             gain_pct = None
             if entry_price and entry_price > 0 and shares > 0:
@@ -221,11 +230,33 @@ class PositionMonitor:
 
             exit_reason = None
 
+            # Momentum fade detection — two consecutive declining cycles while below entry.
+            # For longs: fade = price dropped each of the last 2 cycles AND below entry.
+            # For shorts: fade = price rose each of the last 2 cycles AND above entry.
+            trade_id = trade['trade_id']
+            if exit_reason is None and current_price is not None and entry_price and minutes_held >= 10:
+                history = self._price_history.get(trade_id, [])
+                if len(history) >= 2:
+                    older_price, last_price = history[0], history[1]
+                    below_entry = (is_long and current_price < entry_price) or (not is_long and current_price > entry_price)
+                    fading      = (is_long and current_price < last_price < older_price) or (not is_long and current_price > last_price > older_price)
+                    if below_entry and fading:
+                        exit_reason = 'momentum_fade'
+                        print(
+                            f'📉 {ticker} confirmed gradual fade — '
+                            f'price lower 2 consecutive cycles while below entry — exiting'
+                        )
+
+            # Update price history for this trade — keep last 2 prices only
+            if current_price is not None:
+                history = self._price_history.get(trade_id, [])
+                self._price_history[trade_id] = (history + [current_price])[-2:]
+
             # Time-based loss exit — cut losing positions early before the bracket fires.
             # Triggers only after 20 min held AND position is down 0.50%+.
             # gain_pct is already directionally correct for both longs and shorts
             # (Alpaca unrealized_pl is negative when losing regardless of side).
-            if gain_pct is not None and minutes_held >= 20 and gain_pct <= -0.005:
+            if exit_reason is None and gain_pct is not None and minutes_held >= 20 and gain_pct <= -0.005:
                 exit_reason = 'time_loss_exit'
                 print(
                     f'⏱️ {ticker} held {minutes_held:.0f}min at {gain_pct*100:.2f}% '
@@ -298,6 +329,10 @@ class PositionMonitor:
                     )
                 except Exception as e:
                     log_error('dynamic_exit', ticker, str(e))
+
+        # Clean up price history for positions that are no longer open
+        active_ids = {t['trade_id'] for t in open_trades}
+        self._price_history = {k: v for k, v in self._price_history.items() if k in active_ids}
 
     def check_market_reversal(self) -> 'str | None':
         """
