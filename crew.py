@@ -99,9 +99,10 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     # Reject cycles outside regular trading hours (9:30 AM – 3:45 PM ET,
     # weekdays only) to prevent pre-market or after-hours order submission.
     et_now = datetime.now(ZoneInfo('America/New_York'))
-    market_open  = time(9, 30)
-    orb_cutoff   = time(10, 0)   # ORB formation window — no new entries before 10:00 AM ET
-    market_close = time(15, 45)
+    market_open       = time(9, 30)
+    orb_cutoff        = time(10, 0)   # ORB formation window — no new entries before 10:00 AM ET
+    entry_cutoff      = time(14, 45)  # Hard entry cutoff — no new entries after 2:45 PM ET
+    market_close      = time(15, 45)
     if et_now.weekday() >= 5 or not (market_open <= et_now.time() <= market_close):
         print(f'⏰ Outside market hours ({et_now.strftime("%a %H:%M ET")}) — skipping trading cycle')
         return
@@ -356,6 +357,13 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                         continue
                 except Exception:
                     pass  # Malformed exit_time — allow evaluation to proceed
+
+            # ── Late-Day Entry Gate ───────────────────────────────────────────
+            # Hard block on all new entries after 2:45 PM ET — mirrors the ORB
+            # gate pattern. Position monitoring continues; only new entries stop.
+            if et_now.time() >= entry_cutoff:
+                print(f'⛔ Past 2:45 PM ET — no new entries in final 65 minutes of trading')
+                continue
 
             print(f'\n📊 Analyzing {ticker}...')
 
