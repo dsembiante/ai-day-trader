@@ -34,9 +34,9 @@ def get_profit_threshold(atr_pct, minutes_held: float) -> float:
     required to trigger a dynamic take-profit exit.
 
     Two-axis logic:
-        - Fresh positions (< 30 min): use full ATR-tiered targets so the
+        - Fresh positions (< 10 min): use full ATR-tiered targets so the
           position has room to reach its original bracket take-profit.
-        - Aging positions (30 min+): lower the bar progressively so
+        - Aging positions (10 min+): lower the bar progressively so
           unrealised gains don't reverse back to breakeven or a loss.
 
     Args:
@@ -47,7 +47,7 @@ def get_profit_threshold(atr_pct, minutes_held: float) -> float:
     Returns:
         Profit threshold as a percentage float.
     """
-    if minutes_held < 30:
+    if minutes_held < 10:
         # Fresh position — let it run to the full ATR-calibrated target
         if not atr_pct or atr_pct < 2.0:
             return 1.5   # Low volatility: AAPL, MSFT, JPM
@@ -55,12 +55,12 @@ def get_profit_threshold(atr_pct, minutes_held: float) -> float:
             return 2.0   # Medium volatility: META, AMZN, NVDA
         else:
             return 2.5   # High volatility: TSLA, AMD, COIN
-    elif minutes_held < 60:
-        return 0.35      # 30–60 min held — take any gain above 0.35%
-    elif minutes_held < 90:
-        return 0.25      # 60–90 min held — take any gain above 0.25%
+    elif minutes_held < 40:
+        return 0.35      # 10–40 min held — take any gain above 0.35%
+    elif minutes_held < 70:
+        return 0.25      # 40–70 min held — take any gain above 0.25%
     else:
-        return 0.20      # 90+ min held — take any gain above 0.20%
+        return 0.20      # 70+ min held — take any gain above 0.20%
 
 
 class PositionMonitor:
