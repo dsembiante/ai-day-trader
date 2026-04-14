@@ -247,8 +247,19 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
             if ticker in alpaca_held_tickers or ticker in db_open_tickers:
                 db_trade = db_open_trades_by_ticker.get(ticker)
                 trade_type = db_trade.get('trade_type', 'buy') if db_trade else 'buy'
-                entry_price = db_trade.get('entry_price', 0.0) if db_trade else 0.0
+                entry_price = db_trade.get('entry_price') if db_trade else None
                 is_long = trade_type in ('buy', 'long')
+
+                # Recovery: if entry_price is NULL or $0.00, fetch the actual
+                # Alpaca fill price and patch the DB so all downstream logic works.
+                if db_trade and not entry_price:
+                    recovered = executor.get_filled_entry_price(ticker, trade_type)
+                    if recovered:
+                        entry_price = recovered
+                        db.update_entry_price(db_trade['trade_id'], recovered)
+                        print(f'🔧 {ticker} — recovered entry price ${recovered:.2f} from Alpaca fill history')
+                    else:
+                        print(f'⚠️  {ticker} — entry_price is NULL and Alpaca fill lookup failed — exit signals may be impaired')
 
                 print(f'\n🔄 Re-evaluating open position: {ticker} ({trade_type})')
 

@@ -226,6 +226,19 @@ class Database:
             cur.execute("SELECT * FROM trades WHERE status='open'")
             return [dict(row) for row in cur.fetchall()]
 
+    def update_entry_price(self, trade_id: str, entry_price: float):
+        """
+        Patch the entry_price on an open trade record.
+        Called when the price was NULL or $0.00 at insertion time and is
+        recovered from Alpaca's order fill history during re-evaluation.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                'UPDATE trades SET entry_price=%s WHERE trade_id=%s',
+                (entry_price, trade_id),
+            )
+        self.conn.commit()
+
     def get_last_closed_trade(self, ticker: str) -> dict | None:
         """
         Return the most recent closed trade for a ticker today, or None if none exists.

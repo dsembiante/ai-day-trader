@@ -25,6 +25,7 @@ import time
 from database import Database
 from config import config, HoldPeriod
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from logger import log_error
 
 
@@ -485,7 +486,7 @@ class PositionMonitor:
         The 3:45 PM scheduler cycle checks this flag before calling
         close_all_intraday(), giving a 15-minute execution buffer.
         """
-        now = datetime.now()
+        now = datetime.now(ZoneInfo('America/New_York'))
         return now.hour >= 15 and now.minute >= 30
 
     def close_all_intraday(self):

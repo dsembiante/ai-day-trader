@@ -396,6 +396,40 @@ class TradeExecutor:
             log_error('get_filled_exit_price', ticker, str(e))
         return None
 
+    def get_filled_entry_price(self, ticker: str, trade_type: str) -> float | None:
+        """
+        Return the actual Alpaca fill price for the most recent entry order.
+
+        Queries the last 20 closed orders for the symbol and finds the most
+        recent filled order on the entry side (buy for longs, sell_short for
+        shorts). Used to recover a NULL or $0.00 entry_price in the DB when
+        market_data.current_price was unavailable at the time of insertion.
+
+        Args:
+            ticker:     Symbol to look up.
+            trade_type: 'buy'/'long' for longs, 'short' for shorts.
+
+        Returns:
+            Fill price as a float, or None if no matching filled order found.
+        """
+        try:
+            from alpaca.trading.requests import GetOrdersRequest
+            from alpaca.trading.enums import QueryOrderStatus
+            req = GetOrdersRequest(symbol=ticker, status=QueryOrderStatus.CLOSED, limit=20)
+            orders = self.client.get_orders(req)
+            # Entry side is 'buy' for longs and 'sell_short' for shorts
+            is_long = trade_type in ('buy', 'long')
+            entry_side = 'buy' if is_long else 'sell_short'
+            for order in orders:
+                if order.symbol != ticker or order.filled_avg_price is None:
+                    continue
+                side_str = str(order.side).lower().replace('orderside.', '')
+                if side_str == entry_side:
+                    return float(order.filled_avg_price)
+        except Exception as e:
+            log_error('get_filled_entry_price', ticker, str(e))
+        return None
+
     def close_all_positions(self):
         """
         Emergency close of all open positions.
