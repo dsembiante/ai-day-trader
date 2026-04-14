@@ -250,16 +250,22 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 entry_price = db_trade.get('entry_price') if db_trade else None
                 is_long = trade_type in ('buy', 'long')
 
-                # Recovery: if entry_price is NULL or $0.00, fetch the actual
-                # Alpaca fill price and patch the DB so all downstream logic works.
+                # Recovery: if entry_price is NULL or $0.00, recover from Alpaca in order:
+                # 1. avg_entry_price from the live position (most reliable)
+                # 2. Order history fill price (unreliable if limit entry still pending)
+                # 3. current market price as last-resort so exit logic still fires
                 if db_trade and not entry_price:
-                    recovered = executor.get_filled_entry_price(ticker, trade_type)
+                    alpaca_pos_for_recovery = alpaca_positions.get(ticker, {})
+                    recovered = (
+                        alpaca_pos_for_recovery.get('avg_entry_price')
+                        or executor.get_filled_entry_price(ticker, trade_type)
+                    )
                     if recovered:
                         entry_price = recovered
                         db.update_entry_price(db_trade['trade_id'], recovered)
-                        print(f'🔧 {ticker} — recovered entry price ${recovered:.2f} from Alpaca fill history')
+                        print(f'🔧 {ticker} — recovered entry price ${recovered:.2f} from Alpaca avg_entry_price / fill history')
                     else:
-                        print(f'⚠️  {ticker} — entry_price is NULL and Alpaca fill lookup failed — exit signals may be impaired')
+                        print(f'⚠️  {ticker} — entry_price NULL and recovery failed — exit signals may be impaired')
 
                 print(f'\n🔄 Re-evaluating open position: {ticker} ({trade_type})')
 
@@ -577,7 +583,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                         'order_type':             decision.order_type,
                         'hold_period':            decision.hold_period,
                         'max_hold_days':          decision.max_hold_days,
-                        'entry_price':            market_data.current_price,
+                        'entry_price':            decision.entry_price or market_data.current_price,
                         'exit_price':             None,       # Populated at close
                         'shares':                 sizing['shares'],
                         'position_size_usd':      sizing['position_usd'],
@@ -810,7 +816,7 @@ def run_single_ticker(ticker: str, headline: str, position_multiplier: float = 1
                     'order_type':             decision.order_type,
                     'hold_period':            decision.hold_period,
                     'max_hold_days':          decision.max_hold_days,
-                    'entry_price':            market_data.current_price,
+                    'entry_price':            decision.entry_price or market_data.current_price,
                     'exit_price':             None,
                     'shares':                 sizing['shares'],
                     'position_size_usd':      sizing['position_usd'],

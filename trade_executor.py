@@ -85,11 +85,12 @@ class TradeExecutor:
             positions = self.client.get_all_positions()
             return [
                 {
-                    'ticker':        p.symbol,
-                    'qty':           float(p.qty),
-                    'market_value':  float(p.market_value),
-                    'unrealized_pl': float(p.unrealized_pl),
-                    'side':          p.side,
+                    'ticker':           p.symbol,
+                    'qty':              float(p.qty),
+                    'market_value':     float(p.market_value),
+                    'unrealized_pl':    float(p.unrealized_pl),
+                    'side':             p.side,
+                    'avg_entry_price':  float(p.avg_entry_price) if p.avg_entry_price else None,
                 }
                 for p in positions
             ]

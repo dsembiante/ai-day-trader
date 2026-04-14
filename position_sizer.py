@@ -116,17 +116,17 @@ class PositionSizer:
         """
         if hold == HoldPeriod.INTRADAY:
             if atr_pct is not None and atr_pct > 0:
-                # Tiered fixed percentages — ~2× the time-tiered profit target
+                # Tiered fixed percentages — matched to time-tiered profit targets
                 if atr_pct < 2.0:
-                    pct = 0.0070   # 0.70% — 2× the 0.35% 30–60 min profit target
+                    pct = 0.0035   # 0.35% — low-vol names
                 elif atr_pct < 3.5:
-                    pct = 0.0100   # 1.00% — wider cushion for med-vol names
+                    pct = 0.0050   # 0.50% — med-vol names
                 else:
-                    pct = 0.0125   # 1.25% — wider cushion for high-vol names
+                    pct = 0.0070   # 0.70% — high-vol names
                 self._last_atr_stop_pct = pct
             else:
                 # ATR unavailable — use medium-tier default rather than wide config fallback
-                pct = 0.0100
+                pct = 0.0050
                 self._last_atr_stop_pct = None  # Signals fixed-stop path to caller
                 if ticker:
                     print(f'⚠️  ATR unavailable for {ticker} — using fallback 1.00% intraday stop')
