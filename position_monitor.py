@@ -209,6 +209,18 @@ class PositionMonitor:
             raw_qty = alpaca_pos.get('qty') or 0
             current_price = abs(alpaca_pos['market_value']) / abs(raw_qty) if raw_qty != 0 else None
 
+            # Recovery: if entry_price is NULL or $0.00, fetch actual Alpaca fill
+            # price and patch the DB. Without this, all gain_pct checks are skipped
+            # and the profit threshold, peak pullback, and time-loss exits never fire.
+            if not entry_price:
+                recovered = self.executor.get_filled_entry_price(ticker, trade.get('trade_type', 'buy'))
+                if recovered:
+                    entry_price = recovered
+                    self.db.update_entry_price(trade['trade_id'], recovered)
+                    print(f'🔧 {ticker} — recovered entry price ${recovered:.2f} from Alpaca fill history')
+                else:
+                    print(f'⚠️  {ticker} — entry_price NULL in DB and Alpaca fill lookup failed — skipping gain checks')
+
             # Unrealized gain % from entry; None when entry data is missing
             gain_pct = None
             if entry_price and entry_price > 0 and shares > 0:
