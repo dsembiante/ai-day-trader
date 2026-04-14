@@ -250,9 +250,10 @@ class PositionMonitor:
                     fading      = (is_long and current_price < last_price < older_price) or (not is_long and current_price > last_price > older_price)
                     if below_entry and fading:
                         exit_reason = 'momentum_fade'
+                        direction = 'lower' if is_long else 'higher'
                         print(
                             f'📉 {ticker} confirmed gradual fade — '
-                            f'price lower 2 consecutive cycles while below entry — exiting'
+                            f'price {direction} 2 consecutive cycles while against entry — exiting'
                         )
 
             # Update price history for this trade — keep last 2 prices only
