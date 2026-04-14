@@ -37,8 +37,9 @@ def get_profit_threshold(atr_pct, minutes_held: float) -> float:
     Two-axis logic:
         - Fresh positions (< 10 min): use full ATR-tiered targets so the
           position has room to reach its original bracket take-profit.
-        - Aging positions (10 min+): lower the bar progressively so
-          unrealised gains don't reverse back to breakeven or a loss.
+        - 10–30 min: lower bar to 0.35% to capture momentum still running.
+        - 30+ min: take any positive gain (0.01%) — position has had time
+          to run; locking in anything beats letting it reverse to flat.
 
     Args:
         atr_pct:      ATR as a percentage of price (e.g. 2.3 means 2.3%).
@@ -56,12 +57,10 @@ def get_profit_threshold(atr_pct, minutes_held: float) -> float:
             return 2.0   # Medium volatility: META, AMZN, NVDA
         else:
             return 2.5   # High volatility: TSLA, AMD, COIN
-    elif minutes_held < 40:
-        return 0.35      # 10–40 min held — take any gain above 0.35%
-    elif minutes_held < 70:
-        return 0.25      # 40–70 min held — take any gain above 0.25%
+    elif minutes_held < 30:
+        return 0.35      # 10–30 min held — take any gain above 0.35%
     else:
-        return 0.20      # 70+ min held — take any gain above 0.20%
+        return 0.01      # 30+ min held — take any positive gain
 
 
 class PositionMonitor:
@@ -290,12 +289,19 @@ class PositionMonitor:
             # Condition 1: gain exceeds time-and-ATR-tiered threshold — dynamic take-profit
             if exit_reason is None and gain_pct is not None:
                 gain_display = f'{gain_pct * 100:+.2f}%'
+                taking_any_gain = profit_threshold <= 0.01
                 if gain_pct > profit_threshold / 100:
                     exit_reason = 'dynamic_take_profit'
-                    print(
-                        f'⏱️  {ticker} held {minutes_held:.0f}min — profit threshold: {profit_threshold:.2f}% '
-                        f'(current gain: {gain_display}) — ABOVE threshold, exiting'
-                    )
+                    if taking_any_gain:
+                        print(
+                            f'⏱️ {ticker} held {minutes_held:.0f}min — taking any positive gain '
+                            f'(current: {gain_display}) — EXITING'
+                        )
+                    else:
+                        print(
+                            f'⏱️  {ticker} held {minutes_held:.0f}min — profit threshold: {profit_threshold:.2f}% '
+                            f'(current gain: {gain_display}) — ABOVE threshold, exiting'
+                        )
                 else:
                     print(
                         f'⏱️  {ticker} held {minutes_held:.0f}min — profit threshold: {profit_threshold:.2f}% '
