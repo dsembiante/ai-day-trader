@@ -28,7 +28,7 @@ Deploy on Railway:
 import schedule, time, threading
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from crew import run_trading_cycle, run_single_ticker
+from crew import run_trading_cycle, run_single_ticker, run_position_monitor_only
 from report_generator import generate_daily_report
 from circuit_breaker import CircuitBreaker
 from position_monitor import PositionMonitor
@@ -141,6 +141,21 @@ def pre_close_run():
     monitor.close_all_intraday()
 
 
+def run_monitor_check():
+    """
+    5-minute lightweight position exit check — no entry evaluation, no Groq calls.
+
+    Runs throughout the trading day on all schedule modes. Catches stop-loss,
+    take-profit, and profit threshold exits faster than the full cycle interval.
+    """
+    if not market_is_open():
+        return
+    try:
+        run_position_monitor_only()
+    except Exception as e:
+        print(f'[monitor_check] Error: {e}')
+
+
 def end_of_day():
     """
     4:00 PM post-market job — generates the daily PDF performance report.
@@ -243,6 +258,20 @@ elif config.run_mode == RunMode.INTRADAY_SMART:
     # 3:50 PM — final cycle + force-close all intraday positions
     schedule.every().day.at('15:50').do(pre_close_run)
     schedule.every().day.at('16:00').do(end_of_day)
+
+
+# ── 5-Minute Position Monitor (all run modes) ────────────────────────────────
+# Lightweight exit checks run every 5 minutes from market open to pre-close,
+# independent of the full entry-evaluation schedule. Provides faster reaction
+# to stop-loss / take-profit / dynamic profit threshold triggers between full
+# cycles, especially during the 15-minute mid-day window.
+for _hour in range(9, 16):
+    for _minute in range(0, 60, 5):
+        if _hour == 9 and _minute < 30:
+            continue  # Before market open
+        if _hour == 15 and _minute > 45:
+            continue  # pre_close_run handles 3:50 PM
+        schedule.every().day.at(f'{_hour:02d}:{_minute:02d}').do(run_monitor_check)
 
 
 # ── News Monitor Loop ─────────────────────────────────────────────────────────

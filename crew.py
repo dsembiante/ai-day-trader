@@ -77,6 +77,58 @@ db        = Database()
 cb        = CircuitBreaker()  # Used by run_single_ticker for news-triggered trades
 
 
+# ── Lightweight Position Monitor ─────────────────────────────────────────────
+
+def run_position_monitor_only():
+    """
+    Lightweight exit check — runs position monitoring only, no entry evaluation.
+
+    Called by scheduler.py every 5 minutes throughout the trading day.
+    No Groq/LLM calls are made. Covers:
+        - Bracket exit reconciliation
+        - Stop-loss / take-profit / time-based exits
+        - Dynamic profit threshold exits
+        - Market reversal coverage
+
+    The full run_trading_cycle() handles entries on its own schedule; this
+    function exists solely to catch exits faster between full cycles.
+    """
+    et_now = datetime.now(ZoneInfo('America/New_York'))
+    if et_now.weekday() >= 5 or not (time(9, 30) <= et_now.time() <= time(15, 50)):
+        return
+
+    try:
+        open_positions = executor.get_open_positions()
+        if not open_positions:
+            return  # Nothing to monitor
+
+        print(f'[monitor_check] {et_now.strftime("%H:%M ET")} — checking {len(open_positions)} open positions...')
+        monitor = PositionMonitor(executor)
+        monitor.reconcile_bracket_exits()
+        monitor.check_all_positions()
+        monitor.check_dynamic_exits()
+
+        reversal = monitor.check_market_reversal()
+        if reversal in ('cover_longs', 'cover_shorts'):
+            target_types = ('buy', 'long') if reversal == 'cover_longs' else ('short',)
+            for trade in db.get_open_trades():
+                if trade.get('trade_type') in target_types:
+                    try:
+                        executor.close_position(trade['ticker'], trade['trade_type'])
+                        import time as _time; _time.sleep(2)
+                        exit_price = executor.get_filled_exit_price(trade['ticker'])
+                        db.update_trade_status(
+                            trade['trade_id'],
+                            status='closed',
+                            exit_reason=f'market_reversal_{reversal}',
+                            exit_price=exit_price,
+                        )
+                    except Exception as e:
+                        log_error('monitor_check_reversal', trade['ticker'], str(e))
+    except Exception as e:
+        print(f'[monitor_check] Error: {e}')
+
+
 # ── Main Cycle ────────────────────────────────────────────────────────────────
 
 def run_trading_cycle(circuit_breaker: CircuitBreaker):
@@ -149,6 +201,14 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     if not circuit_breaker.check(portfolio_value):
         print('🚨 Circuit breaker active — new entries blocked, position monitoring completed')
         run_log.circuit_breaker_triggered = True
+        log_run(run_log)
+        return
+
+    # ── Gate 3: 1:00 PM Entry Cutoff ─────────────────────────────────────────
+    # After 1:00 PM ET, all new entry evaluation is blocked. Position monitoring
+    # has already completed above — this gate only prevents the entry loop below.
+    if et_now.time() >= time(13, 0):
+        print(f'⛔ Past 1:00 PM ET — entries closed, monitoring positions only')
         log_run(run_log)
         return
 
