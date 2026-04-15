@@ -98,7 +98,8 @@ class Config(BaseModel):
     allow_intraday: bool = True
 
     # ── Risk Management ───────────────────────────────────────────────────────
-    max_position_pct: float = 0.10      # Max 10% of portfolio per single position
+    min_position_pct: float = 0.10      # Floor: 10% of portfolio at min confidence (~$4,000 on $40k)
+    max_position_pct: float = 0.15      # Ceiling: 15% of portfolio at max confidence (~$6,000 on $40k)
     circuit_breaker_pct: float = 0.10   # Hard stop: halt all trading at 10% drawdown
     confidence_threshold: float = 0.82  # Minimum agent confidence score to enter a trade
     max_positions: int = 15             # Maximum concurrent open positions

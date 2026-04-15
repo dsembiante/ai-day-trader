@@ -54,11 +54,19 @@ class PositionSizer:
                 shares:           Number of shares (fractional, rounded to 2dp).
                 pct_of_portfolio: Position as a percentage of total portfolio value.
         """
-        # Base risk budget — the most we would ever allocate to a single position
-        max_risk_usd = portfolio_value * config.max_position_pct
+        # Dollar floor and ceiling derived from config percentages.
+        # min_position_pct (10%) = $4,000 on a $40k account (lowest-confidence trades).
+        # max_position_pct (15%) = $6,000 on a $40k account (highest-confidence trades).
+        min_usd = portfolio_value * config.min_position_pct
+        max_usd = portfolio_value * config.max_position_pct
 
         # Map confidence from [0.75, 1.0] to [0.0, 1.0]; clamp for safety
         confidence_scalar = max(0.0, min(1.0, (confidence - 0.75) / 0.25))
+
+        # Linear interpolation from floor to ceiling based on confidence.
+        # At confidence 0.75: position_usd = min_usd  ($4,000 on $40k)
+        # At confidence 1.00: position_usd = max_usd  ($6,000 on $40k)
+        position_usd = min_usd + (max_usd - min_usd) * confidence_scalar
 
         # Multiplier by hold period — longer holds justified by stronger conviction
         hold_scalar = {
@@ -67,13 +75,11 @@ class PositionSizer:
             HoldPeriod.POSITION: 1.3,   # Increased — high-conviction multi-week trade
         }.get(hold_period, 1.0)
 
-        # Final size: slides from 50% (min confidence) to 100% (max confidence)
-        # of the base budget, then scaled by hold period
-        position_usd = max_risk_usd * (0.5 + 0.5 * confidence_scalar) * hold_scalar
+        position_usd = position_usd * hold_scalar
 
-        # Hard cap at 130% of base budget — prevents position trades from ever
-        # exceeding 2.6% of portfolio regardless of confidence score
-        position_usd = min(position_usd, max_risk_usd * 1.3)
+        # Hard cap at max_usd × hold_scalar — prevents position trades from
+        # exceeding the ceiling scaled by the hold multiplier
+        position_usd = min(position_usd, max_usd * hold_scalar)
 
         shares = round(position_usd / current_price, 2)
 

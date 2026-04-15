@@ -226,6 +226,11 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
         config.confidence_threshold = max(config.confidence_threshold, 0.87)
         print(f'⚠️  HIGH IMPACT MACRO DAY: {macro_event} — confidence threshold raised to {config.confidence_threshold}')
 
+    # Snapshot the cycle-level threshold so per-ticker ATR adjustments can
+    # temporarily raise it for high-volatility tickers and restore it cleanly
+    # before the next ticker is evaluated.
+    _cycle_confidence_threshold = config.confidence_threshold
+
     # ── Agent Instantiation ───────────────────────────────────────────────────
     # Agents are created once per cycle (not per ticker) and reused.
     # Each agent holds the same shared LLM client from agents.py, so creating
@@ -386,6 +391,20 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 print(f'⚠️  Skipping {ticker} — no price data available')
                 continue
 
+            # ── Per-Ticker ATR Volatility Regime ──────────────────────────────
+            # Restore cycle-level threshold before evaluating this ticker.
+            # The previous ticker may have temporarily raised it for high-vol.
+            config.confidence_threshold = _cycle_confidence_threshold
+
+            _ticker_atr = market_data.atr_pct or 0.0
+            _is_high_vol = _ticker_atr >= 4.0
+            if _is_high_vol:
+                config.confidence_threshold = max(config.confidence_threshold, 0.85)
+                print(
+                    f'⚠️ {ticker} ATR {_ticker_atr:.2f}% — high volatility, '
+                    f'requiring 3/4 signals and 0.85 confidence'
+                )
+
             # ── Market Data Summary ───────────────────────────────────────────
             # Pre-format all signals into a single string injected into each
             # agent prompt. Inline formatting handles None values gracefully
@@ -415,6 +434,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 Volume confirmed: {market_data.volume_confirmed if market_data.volume_confirmed is not None else 'N/A'}
 
                 ATR%: {f'{market_data.atr_pct:.2f}%' if market_data.atr_pct else 'N/A'}
+                Volatility Regime: {f'⚠️ HIGH VOLATILITY TICKER (ATR: {market_data.atr_pct:.2f}%) — require 3/4 signals minimum and be conservative. Normal price noise on this ticker can look like valid signals. Confidence must be >= 0.85 to execute.' if _is_high_vol else 'Normal — standard 2/4 signal threshold applies.'}
                 RSI: {f'{market_data.rsi:.1f}' if market_data.rsi else 'N/A'}
                 MACD: {f'{market_data.macd:.4f}' if market_data.macd else 'N/A'}
                 50-day MA: {f'{market_data.moving_avg_50:.2f}' if market_data.moving_avg_50 else 'N/A'}
@@ -573,6 +593,26 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 if order_result.get('status') == 'placed':
                     trades_executed += 1
 
+                    # Resolve the actual fill price for entry_price.
+                    # Priority: (1) Alpaca avg_entry_price from the live position
+                    # after a brief settle — this is the true fill price for both
+                    # market and limit orders and is always populated by Alpaca.
+                    # (2) decision.entry_price (limit price or agent estimate).
+                    # (3) market_data.current_price (pre-order snapshot).
+                    # Storing a correct price here is critical — NULL entry_price
+                    # disables ALL dynamic exits (loss/profit/time) in position_monitor.
+                    actual_entry_price = decision.entry_price or market_data.current_price
+                    try:
+                        time.sleep(2)  # Allow market order to fill before querying
+                        live_pos_list = executor.get_open_positions()
+                        for _pos in live_pos_list:
+                            if _pos['ticker'] == ticker and _pos.get('avg_entry_price'):
+                                actual_entry_price = _pos['avg_entry_price']
+                                print(f'[executor] {ticker} — actual fill price from Alpaca: ${actual_entry_price:.2f}')
+                                break
+                    except Exception as _e:
+                        print(f'[executor] {ticker} — could not fetch Alpaca fill price, using estimate: {_e}')
+
                     # Build the full trade record for both SQLite and the JSON journal.
                     # trade_id is a UUID generated here rather than by the database so
                     # it can be referenced in logs before the DB write completes.
@@ -583,7 +623,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                         'order_type':             decision.order_type,
                         'hold_period':            decision.hold_period,
                         'max_hold_days':          decision.max_hold_days,
-                        'entry_price':            decision.entry_price or market_data.current_price,
+                        'entry_price':            actual_entry_price,
                         'exit_price':             None,       # Populated at close
                         'shares':                 sizing['shares'],
                         'position_size_usd':      sizing['position_usd'],
@@ -809,6 +849,19 @@ def run_single_ticker(ticker: str, headline: str, position_multiplier: float = 1
 
             if order_result.get('status') == 'placed':
                 import uuid
+                # Resolve actual fill price — same priority chain as main cycle
+                actual_entry_price = decision.entry_price or market_data.current_price
+                try:
+                    time.sleep(2)
+                    live_pos_list = executor.get_open_positions()
+                    for _pos in live_pos_list:
+                        if _pos['ticker'] == ticker and _pos.get('avg_entry_price'):
+                            actual_entry_price = _pos['avg_entry_price']
+                            print(f'[executor] {ticker} (news) — actual fill price from Alpaca: ${actual_entry_price:.2f}')
+                            break
+                except Exception as _e:
+                    print(f'[executor] {ticker} (news) — could not fetch Alpaca fill price, using estimate: {_e}')
+
                 trade_record = {
                     'trade_id':               str(uuid.uuid4()),
                     'ticker':                 ticker,
@@ -816,7 +869,7 @@ def run_single_ticker(ticker: str, headline: str, position_multiplier: float = 1
                     'order_type':             decision.order_type,
                     'hold_period':            decision.hold_period,
                     'max_hold_days':          decision.max_hold_days,
-                    'entry_price':            decision.entry_price or market_data.current_price,
+                    'entry_price':            actual_entry_price,
                     'exit_price':             None,
                     'shares':                 sizing['shares'],
                     'position_size_usd':      sizing['position_usd'],

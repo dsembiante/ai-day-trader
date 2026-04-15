@@ -37,7 +37,9 @@ def get_profit_threshold(atr_pct, minutes_held: float) -> float:
     Two-axis logic:
         - Fresh positions (< 10 min): use full ATR-tiered targets so the
           position has room to reach its original bracket take-profit.
-        - 10–30 min: lower bar to 0.35% to capture momentum still running.
+        - 10–30 min: lower bar based on session —
+            Morning (before 1 PM ET): 0.35%
+            Afternoon (1 PM ET+):     0.15%  (thinner afternoon momentum)
         - 30+ min: take any positive gain (0.01%) — position has had time
           to run; locking in anything beats letting it reverse to flat.
 
@@ -49,6 +51,9 @@ def get_profit_threshold(atr_pct, minutes_held: float) -> float:
     Returns:
         Profit threshold as a percentage float.
     """
+    et_now = datetime.now(ZoneInfo('America/New_York'))
+    is_afternoon = et_now.hour >= 13  # 1:00 PM ET and later
+
     if minutes_held < 10:
         # Fresh position — let it run to the full ATR-calibrated target
         if not atr_pct or atr_pct < 2.0:
@@ -58,7 +63,8 @@ def get_profit_threshold(atr_pct, minutes_held: float) -> float:
         else:
             return 2.5   # High volatility: TSLA, AMD, COIN
     elif minutes_held < 30:
-        return 0.35      # 10–30 min held — take any gain above 0.35%
+        # Afternoon gets a lower bar — thinner momentum after lunch
+        return 0.15 if is_afternoon else 0.35
     else:
         return 0.01      # 30+ min held — take any positive gain
 
@@ -253,6 +259,8 @@ class PositionMonitor:
                 minutes_held = 0.0
 
             profit_threshold = get_profit_threshold(atr_pct, minutes_held)
+            _et_now = datetime.now(ZoneInfo('America/New_York'))
+            session_label = 'AFTERNOON' if _et_now.hour >= 13 else 'MORNING'
 
             exit_reason = None
 
@@ -311,17 +319,17 @@ class PositionMonitor:
                     exit_reason = 'dynamic_take_profit'
                     if taking_any_gain:
                         print(
-                            f'⏱️ {ticker} held {minutes_held:.0f}min — taking any positive gain '
+                            f'⏱️ {ticker} held {minutes_held:.0f}min [{session_label}] — taking any positive gain '
                             f'(current: {gain_display}) — EXITING'
                         )
                     else:
                         print(
-                            f'⏱️  {ticker} held {minutes_held:.0f}min — profit threshold: {profit_threshold:.2f}% '
+                            f'⏱️  {ticker} held {minutes_held:.0f}min [{session_label}] — profit threshold: {profit_threshold:.2f}% '
                             f'(current gain: {gain_display}) — ABOVE threshold, exiting'
                         )
                 else:
                     print(
-                        f'⏱️  {ticker} held {minutes_held:.0f}min — profit threshold: {profit_threshold:.2f}% '
+                        f'⏱️  {ticker} held {minutes_held:.0f}min [{session_label}] — profit threshold: {profit_threshold:.2f}% '
                         f'(current gain: {gain_display}) — BELOW threshold, holding'
                     )
 
@@ -514,48 +522,57 @@ class PositionMonitor:
 
     def close_all_intraday(self):
         """
-        Force-close every open intraday position before market close.
+        Force-close every open position before market close.
 
-        Called by the scheduler on the 3:45 PM cycle when is_intraday_close_time()
-        returns True. Intraday positions must never be held overnight — the
-        wider gap risk is outside the risk budget defined for this hold tier.
+        Uses Alpaca's live position list as the source of truth — closes ALL
+        open Alpaca positions regardless of whether they exist in the DB or
+        have valid entry prices. This is the last line of defense against
+        overnight positions; DB state is never relied on here.
 
-        Hybrid overnight rule: if an intraday position has > 3% unrealized gain
-        at this point AND the market regime is BULL, it is upgraded to a swing
-        trade (hold_period=swing, max_hold_days=5) instead of being closed. The
-        position stays open with its existing stop-loss bracket intact.
+        Hybrid overnight rule: DB-tracked intraday positions with > 3%
+        unrealized gain in a BULL regime are upgraded to swing instead of
+        being force-closed. The position stays open with its bracket intact.
 
-        Guard: if config.allow_intraday is False, no intraday positions should
-        exist (get_hold_period_safe() upgrades them all to swing at entry).
-        The early return here is a safety net for that case.
+        Guard: if config.allow_intraday is False no intraday positions should
+        exist; the early return is a safety net for that case.
 
-        Failures are logged individually; remaining intraday positions continue
-        to be processed so a single bad close does not leave others open.
+        Every close attempt is individually logged so Railway logs show the
+        full picture even when some closures fail.
         """
-        # No intraday positions can exist when PDT protection is active
         if not config.allow_intraday:
             print('⚠️  Intraday disabled — no intraday positions to close')
             return
 
+        # ── Source of truth: Alpaca live positions ────────────────────────────
+        # Do NOT rely solely on DB open trades — positions entered via a code
+        # path whose DB insert failed are invisible to get_open_trades() but
+        # are still live in Alpaca and must be closed.
+        live_positions = {p['ticker']: p for p in self.executor.get_open_positions()}
+
+        if not live_positions:
+            print('✅ EOD: No open Alpaca positions — nothing to close')
+            return
+
+        tickers_str = ', '.join(live_positions.keys())
+        print(f'🔴 EOD close: {len(live_positions)} open position(s) detected — {tickers_str}')
+
+        # Build DB trade index for record updates after close
         open_trades = self.db.get_open_trades()
+        db_by_ticker = {t['ticker']: t for t in open_trades}
 
-        # Filter to intraday tier only — swing and position trades are unaffected
-        intraday = [t for t in open_trades if t.get('hold_period') == 'intraday']
-
-        # Pre-fetch Alpaca positions and market regime once for the entire batch
-        alpaca_positions = {p['ticker']: p for p in self.executor.get_open_positions()}
+        # Market regime fetched once for the hybrid overnight rule
         from data_collector import DataCollector
         market_regime = DataCollector().get_market_regime()
 
-        for trade in intraday:
-            ticker = trade['ticker']
+        for ticker, alpaca_pos in live_positions.items():
+            db_trade = db_by_ticker.get(ticker)
 
-            # Hybrid overnight rule: > 3% gain in bull regime → upgrade to swing
-            if market_regime == 'bull':
-                alpaca_pos = alpaca_positions.get(ticker)
-                entry_price = trade.get('entry_price')
-                shares = trade.get('shares') or 0
-                if alpaca_pos and entry_price and entry_price > 0 and shares > 0:
+            # Hybrid overnight rule: DB-tracked intraday trade with > 3% gain
+            # in a bull regime → upgrade to swing instead of force-closing.
+            if db_trade and db_trade.get('hold_period') == 'intraday' and market_regime == 'bull':
+                entry_price = db_trade.get('entry_price')
+                shares = db_trade.get('shares') or 0
+                if entry_price and entry_price > 0 and shares > 0:
                     gain_pct = alpaca_pos['unrealized_pl'] / (entry_price * shares)
                     if gain_pct > 0.03:
                         print(
@@ -563,45 +580,48 @@ class PositionMonitor:
                             f'in bull regime — holding overnight'
                         )
                         try:
-                            self.db.upgrade_trade_to_swing(trade['trade_id'])
+                            self.db.upgrade_trade_to_swing(db_trade['trade_id'])
                         except Exception as e:
                             log_error('upgrade_to_swing', ticker, str(e))
                         continue  # Skip force-close — position stays open as swing
 
+            # Determine side from live Alpaca position (not the DB record)
+            position_side = 'long'
+            side_val = alpaca_pos.get('side')
+            if side_val and str(side_val).lower() in ('short', 'positionside.short'):
+                position_side = 'short'
+            elif float(alpaca_pos.get('qty', 0)) < 0:
+                position_side = 'short'
+
+            action = 'market sell' if position_side == 'long' else 'buy-to-cover'
+            print(f'🔴 EOD closing {ticker} ({position_side}) — submitting {action}')
+
             try:
-                # Determine closing direction from the live Alpaca position side,
-                # not the trade record — bracket fills can change the effective side.
-                alpaca_pos = alpaca_positions.get(ticker)
-                position_side = 'long'  # Default; overridden below when data is available
-                if alpaca_pos:
-                    side_val = alpaca_pos.get('side')
-                    # Alpaca SDK returns PositionSide enum; compare string repr
-                    if side_val and str(side_val).lower() in ('short', 'positionside.short'):
-                        position_side = 'short'
-                    elif float(alpaca_pos.get('qty', 0)) < 0:
-                        position_side = 'short'
-
-                print(
-                    f'🔴 EOD closing {position_side} position: {ticker} — '
-                    f"placing {'sell' if position_side == 'long' else 'buy-to-cover'}"
-                )
-
-                # Cancel open bracket legs first to avoid Alpaca error 40310000,
-                # then close_position() — Alpaca handles both long (sell) and
-                # short (buy-to-cover) correctly from the same API call.
+                # Cancel bracket legs first to prevent Alpaca error 40310000
                 self.executor._cancel_open_orders(ticker)
-                time.sleep(2)  # Wait for cancellation to propagate before placing close
+                time.sleep(2)
                 self.executor.client.close_position(ticker)
-
-                # Wait for Alpaca to record the fill before querying order history
                 time.sleep(2)
                 exit_price = self.executor.get_filled_exit_price(ticker)
 
-                self.db.update_trade_status(
-                    trade['trade_id'],
-                    status='closed',
-                    exit_reason='intraday_forced_close',  # Distinct from hold_period_expired
-                    exit_price=exit_price,
-                )
+                price_str = f'${exit_price:.2f}' if exit_price else 'unknown'
+                print(f'✅ EOD {ticker} closed successfully at {price_str}')
+
+                # Update DB if this position has a matching trade record
+                if db_trade:
+                    try:
+                        self.db.update_trade_status(
+                            db_trade['trade_id'],
+                            status='closed',
+                            exit_reason='intraday_forced_close',
+                            exit_price=exit_price,
+                        )
+                    except Exception as e:
+                        log_error('eod_db_update', ticker, str(e))
+                        print(f'⚠️  EOD {ticker} — Alpaca close succeeded but DB update failed: {e}')
+                else:
+                    print(f'⚠️  EOD {ticker} — no DB record (orphan position) — Alpaca position closed')
+
             except Exception as e:
                 log_error('intraday_close', ticker, str(e))
+                print(f'❌ EOD {ticker} failed — reason: {e}')
