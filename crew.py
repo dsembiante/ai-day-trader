@@ -187,12 +187,16 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
 
     if market_regime == 'bear':
         print('🐻 Bear market detected — reducing position sizes and favoring shorts')
-        config.max_position_pct = 0.05   # 5% per trade in bear market (~$1,500 on $30k)
+        config.min_position_pct = 0.067  # ~$2,000 on $29.9k
+        config.max_position_pct = 0.10   # ~$3,000 on $29.9k
     elif market_regime == 'sideways':
         print('➡️  Sideways market — being selective')
-        config.max_position_pct = 0.07   # 7% per trade in sideways market (~$2,100 on $30k)
+        config.min_position_pct = 0.10   # ~$3,000 on $29.9k
+        config.max_position_pct = 0.134  # ~$4,000 on $29.9k
     else:
-        config.max_position_pct = 0.10   # 10% per trade in bull market (~$3,000 on $30k)
+        # Bull market — restore full config targets ($4,000–$6,000 on $29.9k)
+        config.min_position_pct = 0.134
+        config.max_position_pct = 0.201
 
     # ── VIX-Based Confidence Threshold ───────────────────────────────────────
     # Fetched once per cycle (cached daily by get_vix). VIX failure never aborts

@@ -98,13 +98,13 @@ class Config(BaseModel):
     allow_intraday: bool = True
 
     # ── Risk Management ───────────────────────────────────────────────────────
-    min_position_pct: float = 0.10      # Floor: 10% of portfolio at min confidence (~$4,000 on $40k)
-    max_position_pct: float = 0.15      # Ceiling: 15% of portfolio at max confidence (~$6,000 on $40k)
+    min_position_pct: float = 0.134     # Floor: 13.4% of portfolio at min confidence (~$4,000 on $29.9k)
+    max_position_pct: float = 0.201     # Ceiling: 20.1% of portfolio at max confidence (~$6,000 on $29.9k)
     circuit_breaker_pct: float = 0.10   # Hard stop: halt all trading at 10% drawdown
     confidence_threshold: float = 0.82  # Minimum agent confidence score to enter a trade
     max_positions: int = 15             # Maximum concurrent open positions
     min_signals_required: int = 2       # Minimum agreeing signals before executing a trade
-    max_same_direction_positions: int = 4  # Max concurrent longs OR shorts at one time
+    max_same_direction_positions: int = 6  # Max concurrent longs OR shorts at one time
     loss_cooloff_minutes: int = 30         # Minutes to wait before re-entering a ticker after a losing exit
 
     # ── Hold Period Exit Rules ────────────────────────────────────────────────
