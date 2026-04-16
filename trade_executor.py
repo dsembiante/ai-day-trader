@@ -180,6 +180,34 @@ class TradeExecutor:
             if decision.take_profit_price:
                 decision.take_profit_price = round(decision.take_profit_price, 2)
 
+            # ── Marketable limit / high-conviction market override ────────────
+            # Plain limit orders at exactly current price routinely miss on
+            # momentum entries — the stock clears the price before the order
+            # routes. Two mitigations applied here in priority order:
+            #
+            # 1. High-conviction override (confidence >= 0.85): switch to a
+            #    market order entirely. These are the strongest signals and
+            #    a missed fill costs more than a few cents of slippage.
+            #
+            # 2. Marketable limit (all other limit orders): nudge the limit
+            #    price 0.2% in the fill direction so the order acts like a
+            #    market order in practice while capping slippage at 0.2%.
+            #    Recalculate whole_shares with the adjusted price so qty
+            #    stays consistent with position_size_usd.
+            if decision.order_type == 'limit' and decision.entry_price:
+                if decision.confidence >= 0.85:
+                    decision.order_type = 'market'
+                    print(
+                        f'[executor] {decision.ticker} — high conviction '
+                        f'(confidence={decision.confidence:.2f}) → market order'
+                    )
+                elif type_str in ('buy',):
+                    decision.entry_price = round(decision.entry_price * 1.002, 2)
+                    whole_shares = max(1, int(decision.position_size_usd / decision.entry_price))
+                else:  # short
+                    decision.entry_price = round(decision.entry_price * 0.998, 2)
+                    whole_shares = max(1, int(decision.position_size_usd / decision.entry_price))
+
             # ── Order construction ────────────────────────────────────────────
             if decision.order_type == 'limit' and decision.entry_price:
                 order_data = LimitOrderRequest(

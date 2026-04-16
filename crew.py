@@ -455,6 +455,31 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 print(f'⚠️  Skipping {ticker} — no price data available')
                 continue
 
+            # ── VWAP Re-entry Gate ────────────────────────────────────────────
+            # On a re-entry (ticker already has at least one closed trade today),
+            # require price to be clearly on the correct side of VWAP before
+            # running the full agent cycle. Blocks entries on exhausted momentum
+            # where price is drifting near or through VWAP after a prior exit.
+            # First entries of the day (last_trade is None) bypass this gate.
+            if (
+                last_trade is not None
+                and market_data.vwap
+                and market_data.current_price
+            ):
+                vwap_margin = _get_vwap_margin_pct(market_data.current_price, market_data.vwap)
+                if vwap_margin >= 0 and vwap_margin < 0.30:
+                    print(
+                        f'⏭️ {ticker} — re-entry requires price clearly above VWAP '
+                        f'(current: {vwap_margin:.2f}%) — skipping'
+                    )
+                    continue
+                elif vwap_margin < 0 and vwap_margin > -0.30:
+                    print(
+                        f'⏭️ {ticker} — short re-entry requires price clearly below VWAP '
+                        f'(current: {vwap_margin:.2f}%) — skipping'
+                    )
+                    continue
+
             # ── Per-Ticker ATR Volatility Regime ──────────────────────────────
             # Restore cycle-level threshold before evaluating this ticker.
             # The previous ticker may have temporarily raised it for high-vol.
@@ -660,6 +685,22 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                         f'10:30 AM ET ({et_now.strftime("%H:%M ET")}), skipping {decision.trade_type}'
                     )
                     continue
+
+                # ORB breakout → market order ─────────────────────────────
+                # orb_breakout_up/down live on MarketData, not TradeDecision,
+                # so this override must happen here where both are in scope.
+                # Highest-conviction intraday signal: accept any fill price.
+                if (
+                    decision.order_type == 'limit'
+                    and decision.trade_type is not None
+                ):
+                    trade_str = decision.trade_type.value if hasattr(decision.trade_type, 'value') else str(decision.trade_type)
+                    if trade_str == 'buy' and market_data.orb_breakout_up:
+                        decision.order_type = 'market'
+                        print(f'[crew] {ticker} — ORB breakout up → market order')
+                    elif trade_str in ('short', 'sell_short') and market_data.orb_breakout_down:
+                        decision.order_type = 'market'
+                        print(f'[crew] {ticker} — ORB breakout down → market order')
 
                 # Submit the bracket order to Alpaca
                 order_result = executor.execute_trade(decision)
