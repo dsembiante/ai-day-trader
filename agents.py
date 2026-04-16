@@ -73,7 +73,7 @@ def create_bull_agent() -> Agent:
             'You never hold overnight and always report your signal count in key_factors.'
         ),
         llm=llm,
-        verbose=True,
+        verbose=False,
     )
 
 
@@ -106,7 +106,7 @@ def create_bear_agent() -> Agent:
             'positions overnight, and always report your bearish signal count in key_factors.'
         ),
         llm=llm,
-        verbose=True,
+        verbose=False,
     )
 
 
@@ -141,7 +141,7 @@ def create_risk_manager() -> Agent:
             'Capital preservation is your primary objective.'
         ),
         llm=llm,
-        verbose=True,
+        verbose=False,
     )
 
 
@@ -174,5 +174,5 @@ def create_portfolio_manager() -> Agent:
             '(e.g. multiple tech names moving together).'
         ),
         llm=llm,
-        verbose=True,
+        verbose=False,
     )

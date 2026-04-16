@@ -595,6 +595,17 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
 
             decision = TradeDecision(**raw_dict)
 
+            # ── Compact Decision Summary ──────────────────────────────────────
+            # Replaces the verbose ╭──────╮ agent output (suppressed via verbose=False).
+            # Shows the key fields needed for trade review without dumping full prompts.
+            _reasoning = (decision.risk_manager_reasoning or decision.bull_reasoning or '')[:120]
+            print(
+                f'🤖 {ticker}: execute={decision.execute} | '
+                f'confidence={decision.confidence:.2f} | '
+                f'type={decision.trade_type or "none"} | '
+                f'{_reasoning}'
+            )
+
             # ── Decision Post-Processing ──────────────────────────────────────
             # If the agent omitted entry_price (returns null for market orders),
             # fall back to the current market price so the whole-share calculation
@@ -652,7 +663,9 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
 
                 # Submit the bracket order to Alpaca
                 order_result = executor.execute_trade(decision)
-                print(f'[order_result] {ticker}: {order_result}')
+                _order_status = order_result.get('status', 'unknown')
+                _order_id = order_result.get('order_id', '')
+                print(f'📋 {ticker} order: {_order_status}{f" | id={_order_id[:8]}" if _order_id else ""}')
 
                 if order_result.get('status') == 'placed':
                     trades_executed += 1
@@ -909,7 +922,9 @@ def run_single_ticker(ticker: str, headline: str, position_multiplier: float = 1
                     return
 
             order_result = executor.execute_trade(decision)
-            print(f'[order_result] {ticker}: {order_result}')
+            _order_status = order_result.get('status', 'unknown')
+            _order_id = order_result.get('order_id', '')
+            print(f'📋 {ticker} (news) order: {_order_status}{f" | id={_order_id[:8]}" if _order_id else ""}')
 
             if order_result.get('status') == 'placed':
                 import uuid
