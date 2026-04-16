@@ -169,6 +169,17 @@ class TradeExecutor:
                         print(f'[executor] {decision.ticker} — invalid take profit above entry for short, recalculating')
                         decision.take_profit_price = round(decision.entry_price * (1 - config.intraday_take_profit_pct), 2)
 
+            # ── Price rounding ────────────────────────────────────────────────
+            # Alpaca rejects prices with more than 2 decimal places (sub-penny
+            # increments). Round all three prices here, after validation, so
+            # both the limit and market bracket paths submit clean values.
+            if decision.entry_price:
+                decision.entry_price      = round(decision.entry_price, 2)
+            if decision.stop_loss_price:
+                decision.stop_loss_price  = round(decision.stop_loss_price, 2)
+            if decision.take_profit_price:
+                decision.take_profit_price = round(decision.take_profit_price, 2)
+
             # ── Order construction ────────────────────────────────────────────
             if decision.order_type == 'limit' and decision.entry_price:
                 order_data = LimitOrderRequest(
