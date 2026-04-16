@@ -329,6 +329,98 @@ class Database:
             )
         self.conn.commit()
 
+    def save_daily_performance(self, portfolio_value: float):
+        """
+        Insert or update today's daily performance snapshot.
+
+        Aggregates all closed trades for the current calendar day from the
+        trades table, counts API errors and circuit breaker events from
+        errors.log, and upserts one row into daily_performance.
+
+        ON CONFLICT DO UPDATE ensures the row is refreshed if this is called
+        more than once on the same date (e.g. a test run followed by EOD).
+
+        Args:
+            portfolio_value: End-of-day Alpaca account balance in USD.
+        """
+        today = datetime.now().date().isoformat()
+
+        # ── Aggregate today's closed trades ───────────────────────────────────
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*)                                                  AS total_trades,
+                    COALESCE(SUM(pnl), 0)                                     AS daily_pnl,
+                    SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END)                  AS winning_trades,
+                    SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END)                  AS losing_trades,
+                    SUM(CASE WHEN hold_period = 'intraday'  THEN 1 ELSE 0 END) AS intraday_trades,
+                    SUM(CASE WHEN hold_period = 'swing'     THEN 1 ELSE 0 END) AS swing_trades,
+                    SUM(CASE WHEN hold_period = 'position'  THEN 1 ELSE 0 END) AS position_trades
+                FROM trades
+                WHERE status = 'closed'
+                  AND DATE(exit_time) = %s
+                """,
+                (today,),
+            )
+            row = cur.fetchone()
+
+        total_trades    = row[0] or 0
+        daily_pnl       = float(row[1] or 0.0)
+        winning_trades  = row[2] or 0
+        losing_trades   = row[3] or 0
+        intraday_trades = row[4] or 0
+        swing_trades    = row[5] or 0
+        position_trades = row[6] or 0
+
+        # Starting portfolio value approximation: end-of-day balance minus gains
+        starting_value = portfolio_value - daily_pnl
+        daily_pnl_pct  = (daily_pnl / starting_value) if starting_value > 0 else 0.0
+
+        # ── API errors and circuit breaker from errors.log ────────────────────
+        api_failure_count      = 0
+        circuit_breaker_fired  = 0
+        error_file = os.path.join(config.logs_dir, 'errors.log')
+        if os.path.exists(error_file):
+            with open(error_file) as f:
+                for line in f:
+                    if today in line:
+                        api_failure_count += 1
+                        if 'CIRCUIT_BREAKER' in line.upper():
+                            circuit_breaker_fired = 1
+
+        # ── Upsert ────────────────────────────────────────────────────────────
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO daily_performance
+                    (date, portfolio_value, daily_pnl, daily_pnl_pct,
+                     total_trades, winning_trades, losing_trades,
+                     intraday_trades, swing_trades, position_trades,
+                     circuit_breaker_triggered, api_failures)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (date) DO UPDATE SET
+                    portfolio_value           = EXCLUDED.portfolio_value,
+                    daily_pnl                 = EXCLUDED.daily_pnl,
+                    daily_pnl_pct             = EXCLUDED.daily_pnl_pct,
+                    total_trades              = EXCLUDED.total_trades,
+                    winning_trades            = EXCLUDED.winning_trades,
+                    losing_trades             = EXCLUDED.losing_trades,
+                    intraday_trades           = EXCLUDED.intraday_trades,
+                    swing_trades              = EXCLUDED.swing_trades,
+                    position_trades           = EXCLUDED.position_trades,
+                    circuit_breaker_triggered = EXCLUDED.circuit_breaker_triggered,
+                    api_failures              = EXCLUDED.api_failures
+                """,
+                (
+                    today, portfolio_value, daily_pnl, daily_pnl_pct,
+                    total_trades, winning_trades, losing_trades,
+                    intraday_trades, swing_trades, position_trades,
+                    circuit_breaker_fired, str(api_failure_count),
+                ),
+            )
+        self.conn.commit()
+
     def get_daily_performance(self) -> list:
         """
         Return all daily performance snapshots ordered by date descending.

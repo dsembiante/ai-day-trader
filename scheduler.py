@@ -204,7 +204,7 @@ elif config.run_mode == RunMode.INTRADAY_10MIN:
     #   10:30 AM – 3:00 PM : every 15 minutes (quieter mid-day)
     #   3:00 PM – 3:50 PM  : every 5 minutes  (pre-close momentum window)
     #   3:50 PM            : force-close all intraday positions
-    print('Starting in SMART INTRADAY mode (5min open/close, 15min mid-day)')
+    print('Starting in SMART INTRADAY mode (Entries: 9:00AM-12:00PM CT only | Position monitoring: 9:00AM-2:50PM CT | EOD close: 2:50PM CT)')
 
     # 9:30 AM – 10:25 AM every 5 minutes
     for minute in range(30, 60, 5):
@@ -236,7 +236,7 @@ elif config.run_mode == RunMode.INTRADAY_SMART:
     #   11:00 AM – 2:30 PM : every 15 minutes (quiet mid-day)
     #   2:30 PM – 3:50 PM  : every 5 minutes  (closing volatility window)
     #   3:50 PM            : force-close all intraday positions
-    print('Starting in SMART INTRADAY mode (ORB-aware: skip 9:30-10:00, 5min/15min/5min)')
+    print('Starting in SMART INTRADAY mode (Entries: 9:00AM-12:00PM CT only | Position monitoring: 9:00AM-2:50PM CT | EOD close: 2:50PM CT)')
 
     # 10:00 AM – 10:55 AM every 5 minutes
     for minute in range(0, 60, 5):
@@ -307,7 +307,7 @@ def news_monitor_loop():
 # ── Process Entrypoint ────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
-    print(f'Trading scheduler started in {config.run_mode} mode')
+    print('Trading scheduler started — Full cycle: 10min (entries + exits), Position monitor: 5min (exits only)')
 
     # Start news monitor as a daemon thread — exits automatically when the
     # main process exits, no cleanup required.

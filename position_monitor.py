@@ -625,3 +625,13 @@ class PositionMonitor:
             except Exception as e:
                 log_error('intraday_close', ticker, str(e))
                 print(f'❌ EOD {ticker} failed — reason: {e}')
+
+        # ── Daily Performance Record ───────────────────────────────────────────
+        # Written after all closes so every exit is recorded in the trades table
+        # before the aggregate query runs.
+        try:
+            portfolio_value = self.executor.get_portfolio_value()
+            self.db.save_daily_performance(portfolio_value)
+            print(f'📊 EOD daily_performance saved — portfolio: ${portfolio_value:,.2f}')
+        except Exception as e:
+            log_error('eod_daily_performance', 'ALL', str(e))
