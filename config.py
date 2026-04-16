@@ -132,6 +132,7 @@ class Config(BaseModel):
     watchlist: list = [
         'NVDA', 'AMD', 'AAPL', 'META', 'AMZN',
         'MSFT', 'GOOGL', 'JPM', 'PLTR', 'CRWD', 'COIN',
+        'TSLA', 'NFLX', 'AVGO', 'UBER',
     ]
 
     # ── File Paths ────────────────────────────────────────────────────────────

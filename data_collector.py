@@ -118,6 +118,7 @@ class DataCollector:
                 eps                    = cached.get('eps')
                 analyst_recommendation = cached.get('analyst_recommendation')
                 next_earnings_date     = cached.get('next_earnings_date')
+                headlines              = cached.get('headlines', [])
                 _yf_loaded = True
             except Exception:
                 pass  # Fall through to live fetch
@@ -167,6 +168,26 @@ class DataCollector:
                     except Exception:
                         pass  # Earnings date is best-effort
 
+                    # ── News headlines ────────────────────────────────────────
+                    # Fetched here (inside the cache block) so it's cached daily
+                    # alongside RSI/MACD. Reuses the existing yf_ticker object to
+                    # avoid a second Ticker instantiation and extra HTTP request.
+                    try:
+                        raw_news = yf_ticker.news
+                        if raw_news:
+                            def _extract_title(item):
+                                if 'title' in item and item['title']:
+                                    return item['title']
+                                if 'content' in item and isinstance(item['content'], dict):
+                                    if 'title' in item['content']:
+                                        return item['content']['title']
+                                if 'headline' in item and item['headline']:
+                                    return item['headline']
+                                return None
+                            headlines = [t for t in [_extract_title(n) for n in raw_news[:5]] if t]
+                    except Exception:
+                        pass  # News is best-effort
+
                     # ── Cache results for the rest of the day ─────────────────
                     try:
                         with open(yf_cache, 'w') as f:
@@ -176,6 +197,7 @@ class DataCollector:
                                 'revenue_growth': revenue_growth, 'eps': eps,
                                 'analyst_recommendation': analyst_recommendation,
                                 'next_earnings_date': next_earnings_date,
+                                'headlines': headlines,
                             }, f)
                     except Exception:
                         pass
@@ -193,23 +215,9 @@ class DataCollector:
         # ── 3. yfinance — Recent News Headlines ──────────────────────────────
         # Finnhub is no longer used — status stays False so tasks.py data
         # quality guidance handles it correctly.
+        # NOTE: news is now fetched and cached inside the yfinance block above.
         status.finnhub = False
         news_sentiment = None  # No free yfinance equivalent for sentiment score
-        try:
-            news = yf.Ticker(ticker).news
-            if news:
-                def _extract_title(item):
-                    if 'title' in item and item['title']:
-                        return item['title']
-                    if 'content' in item and isinstance(item['content'], dict):
-                        if 'title' in item['content']:
-                            return item['content']['title']
-                    if 'headline' in item and item['headline']:
-                        return item['headline']
-                    return None
-                headlines = [t for t in [_extract_title(n) for n in news[:5]] if t]
-        except Exception as e:
-            log_error('yfinance_news', ticker, str(e))
 
         # ── 4. VIX — Volatility Index ─────────────────────────────────────────
         vix = self.get_vix()

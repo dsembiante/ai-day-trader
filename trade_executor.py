@@ -20,6 +20,7 @@ Usage:
     result = executor.execute_trade(decision)
 """
 
+from datetime import datetime
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import (
     MarketOrderRequest, LimitOrderRequest,
