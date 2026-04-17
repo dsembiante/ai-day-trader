@@ -20,6 +20,7 @@ Usage:
     result = executor.execute_trade(decision)
 """
 
+import math
 from datetime import datetime
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import (
@@ -145,7 +146,7 @@ class TradeExecutor:
             # is floored to the nearest integer. If that produces 0 shares, fall
             # through to the market/notional path which supports fractional fills.
             if decision.order_type == 'limit' and decision.entry_price:
-                whole_shares = int(decision.position_size_usd / decision.entry_price)
+                whole_shares = math.floor(decision.position_size_usd / decision.entry_price)
                 if whole_shares < 1:
                     print(f'[executor] {decision.ticker} — limit order too small ({whole_shares} shares at ${decision.entry_price}), falling back to market order')
                     decision.order_type = 'market'
@@ -203,10 +204,24 @@ class TradeExecutor:
                     )
                 elif type_str in ('buy',):
                     decision.entry_price = round(decision.entry_price * 1.002, 2)
-                    whole_shares = max(1, int(decision.position_size_usd / decision.entry_price))
+                    whole_shares = math.floor(decision.position_size_usd / decision.entry_price)
                 else:  # short
                     decision.entry_price = round(decision.entry_price * 0.998, 2)
-                    whole_shares = max(1, int(decision.position_size_usd / decision.entry_price))
+                    whole_shares = math.floor(decision.position_size_usd / decision.entry_price)
+
+            # ── Zero-share guard ──────────────────────────────────────────────
+            # After all price adjustments, a floored qty of 0 means the full
+            # position budget buys less than one share. Submitting qty=0 is
+            # an Alpaca error — skip and fall back to the notional market path.
+            if decision.order_type == 'limit' and decision.entry_price:
+                if whole_shares < 1:
+                    print(
+                        f'[executor] {decision.ticker} — 0 shares after price adjustment '
+                        f'(${decision.entry_price:.2f}/share, ${decision.position_size_usd:.2f} budget) '
+                        f'— falling back to market order'
+                    )
+                    log_error('execute_trade', decision.ticker, 'whole_shares=0 after marketable limit adjustment')
+                    decision.order_type = 'market'
 
             # ── Order construction ────────────────────────────────────────────
             if decision.order_type == 'limit' and decision.entry_price:
@@ -221,12 +236,21 @@ class TradeExecutor:
                     stop_loss=StopLossRequest(stop_price=decision.stop_loss_price),
                 )
             else:
-                # Market bracket order — notional dollar amount supports fractional shares
+                # Market bracket order — Alpaca error 42210000: bracket orders require integer
+                # qty, not notional. Calculate whole shares from entry_price (always set to
+                # current_price in crew.py before execute_trade is called).
+                market_shares = math.floor(decision.position_size_usd / decision.entry_price) if decision.entry_price else 0
+                if market_shares < 1:
+                    print(
+                        f'[executor] {decision.ticker} — market order too small '
+                        f'(${decision.position_size_usd:.2f} budget at ${decision.entry_price:.2f}/share) — skipping'
+                    )
+                    return {'status': 'skipped', 'reason': 'market_shares=0'}
                 order_data = MarketOrderRequest(
                     symbol=decision.ticker,
-                    notional=decision.position_size_usd,
+                    qty=market_shares,
                     side=side,
-                    time_in_force=TimeInForce.DAY,   # Unfilled entry expires at market close
+                    time_in_force=TimeInForce.DAY,
                     order_class='bracket',
                     take_profit=TakeProfitRequest(limit_price=decision.take_profit_price),
                     stop_loss=StopLossRequest(stop_price=decision.stop_loss_price),

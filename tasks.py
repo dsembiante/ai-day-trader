@@ -338,7 +338,7 @@ def create_exit_bull_task(agent, ticker: str, market_data_summary: str, entry_pr
     return Task(
         description=f'''
             You are evaluating whether to EXIT an existing LONG position in {ticker}.
-            Original entry price: ${entry_price:.2f}
+            Original entry price: {f'${entry_price:.2f}' if entry_price is not None else 'unknown (use current price for P&L context)'}
 
             Current market data:
             {market_data_summary}
@@ -389,7 +389,7 @@ def create_exit_bear_task(agent, ticker: str, market_data_summary: str, entry_pr
     return Task(
         description=f'''
             You are evaluating whether to EXIT an existing SHORT position in {ticker}.
-            Original entry price: ${entry_price:.2f}
+            Original entry price: {f'${entry_price:.2f}' if entry_price is not None else 'unknown (use current price for P&L context)'}
 
             Current market data:
             {market_data_summary}
