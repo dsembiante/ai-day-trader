@@ -204,11 +204,12 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
         log_run(run_log)
         return
 
-    # ── Gate 3: 1:00 PM Entry Cutoff ─────────────────────────────────────────
-    # After 1:00 PM ET, all new entry evaluation is blocked. Position monitoring
-    # has already completed above — this gate only prevents the entry loop below.
-    if et_now.time() >= time(13, 0):
-        print(f'⛔ Past 1:00 PM ET — entries closed, monitoring positions only')
+    # ── Gate 3: 11:30 AM Entry Cutoff ────────────────────────────────────────
+    # After 11:30 AM ET (10:30 AM CT), all new entry evaluation is blocked.
+    # Position monitoring has already completed above — this gate only prevents
+    # the entry loop below.
+    if et_now.time() >= time(11, 30):
+        print(f'⛔ Past 11:30 AM ET — entries closed, monitoring positions only')
         log_run(run_log)
         return
 
