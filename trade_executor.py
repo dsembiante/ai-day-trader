@@ -138,7 +138,7 @@ class TradeExecutor:
 
         try:
             # Map trade_type string to Alpaca's OrderSide enum
-            side = OrderSide.BUY if decision.trade_type in ['buy'] else OrderSide.SELL
+            side = OrderSide.BUY if decision.trade_type in ['buy'] else OrderSide.SELL_SHORT
             type_str = decision.trade_type.value if hasattr(decision.trade_type, 'value') else str(decision.trade_type)
 
             # ── Limit → Market fallback ───────────────────────────────────────
