@@ -138,7 +138,7 @@ class TradeExecutor:
 
         try:
             # Map trade_type string to Alpaca's OrderSide enum
-            side = OrderSide.BUY if decision.trade_type in ['buy'] else OrderSide.SELL_SHORT
+            side = OrderSide.BUY if decision.trade_type in ['buy'] else OrderSide.SELL
             type_str = decision.trade_type.value if hasattr(decision.trade_type, 'value') else str(decision.trade_type)
 
             # ── Limit → Market fallback ───────────────────────────────────────
@@ -273,6 +273,9 @@ class TradeExecutor:
             }
 
         except Exception as e:
+            if '42210000' in str(e):
+                print(f'⏭️  {decision.ticker} — not shortable at this time (not on ETB list), skipping')
+                return {'status': 'skipped', 'reason': 'not_shortable'}
             print(f'[executor] {decision.ticker} — ERROR: {str(e)}')
             log_error('trade_executor', decision.ticker, str(e))
             return {'status': 'error', 'error': str(e)}
