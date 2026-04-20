@@ -66,6 +66,33 @@ def _get_price_vs_orb_high(price: float, orb_high: float) -> float:
     return (price - orb_high) / orb_high * 100
 
 
+def _get_2bar_momentum(ticker: str) -> float | None:
+    """
+    Return the 2-bar price change % using the last 3 one-minute closes.
+    (most_recent_close - close_2_bars_ago) / close_2_bars_ago * 100
+    Returns None on any fetch or data error — caller must treat None as pass-through.
+    """
+    try:
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame
+        from datetime import timedelta
+        bars = collector.alpaca.get_stock_bars(StockBarsRequest(
+            symbol_or_symbols=ticker,
+            timeframe=TimeFrame.Minute,
+            start=datetime.now() - timedelta(minutes=15),
+        ))
+        df = bars.df.reset_index()
+        if df is None or len(df) < 3:
+            return None
+        close_now = float(df['close'].iloc[-1])
+        close_2ago = float(df['close'].iloc[-3])
+        if close_2ago == 0:
+            return None
+        return (close_now - close_2ago) / close_2ago * 100
+    except Exception:
+        return None
+
+
 # ── Module-Level Singletons ───────────────────────────────────────────────────
 # Instantiated once at import time and reused for every ticker across all
 # scheduler cycles within the process lifetime. This avoids opening new
@@ -691,17 +718,35 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 # orb_breakout_up/down live on MarketData, not TradeDecision,
                 # so this override must happen here where both are in scope.
                 # Highest-conviction intraday signal: accept any fill price.
+                trade_str = decision.trade_type.value if hasattr(decision.trade_type, 'value') else str(decision.trade_type)
                 if (
                     decision.order_type == 'limit'
                     and decision.trade_type is not None
                 ):
-                    trade_str = decision.trade_type.value if hasattr(decision.trade_type, 'value') else str(decision.trade_type)
                     if trade_str == 'buy' and market_data.orb_breakout_up:
                         decision.order_type = 'market'
                         print(f'[crew] {ticker} — ORB breakout up → market order')
                     elif trade_str in ('short', 'sell_short') and market_data.orb_breakout_down:
                         decision.order_type = 'market'
                         print(f'[crew] {ticker} — ORB breakout down → market order')
+
+                # ── 2-Bar Momentum Confirmation Gate ─────────────────────────
+                # Require recent price movement to align with trade direction.
+                # Skips on data failure (None) so a bad fetch never blocks a trade.
+                _momentum = _get_2bar_momentum(ticker)
+                if _momentum is not None:
+                    if trade_str == 'buy' and _momentum < 0:
+                        print(
+                            f'⏭️ {ticker} — LONG skipped: price pulling back on last 2 bars '
+                            f'({_momentum:+.2f}%), waiting for momentum to confirm up'
+                        )
+                        continue
+                    elif trade_str in ('short', 'sell_short') and _momentum > 0:
+                        print(
+                            f'⏭️ {ticker} — SHORT skipped: price bouncing up on last 2 bars '
+                            f'({_momentum:+.2f}%), waiting for momentum to resume down'
+                        )
+                        continue
 
                 # Submit the bracket order to Alpaca
                 order_result = executor.execute_trade(decision)
