@@ -55,8 +55,8 @@ class PositionSizer:
                 pct_of_portfolio: Position as a percentage of total portfolio value.
         """
         # Dollar floor and ceiling derived from config percentages.
-        # min_position_pct (10%) = $4,000 on a $40k account (lowest-confidence trades).
-        # max_position_pct (15%) = $6,000 on a $40k account (highest-confidence trades).
+        # min_position_pct (10%) = $4,000 on a $40k account (confidence 0.75).
+        # max_position_pct (15%) = $6,000 on a $40k account (confidence 1.0).
         min_usd = portfolio_value * config.min_position_pct
         max_usd = portfolio_value * config.max_position_pct
 

@@ -274,17 +274,9 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     print(f'📊 Open positions: {open_longs} longs, {open_shorts} shorts (max {config.max_same_direction_positions} per direction)')
 
     if market_regime == 'bear':
-        print('🐻 Bear market detected — reducing position sizes and favoring shorts')
-        config.min_position_pct = 0.067  # ~$2,000 on $29.9k
-        config.max_position_pct = 0.10   # ~$3,000 on $29.9k
+        print('🐻 Bear market detected — favoring shorts, position sizing via multipliers')
     elif market_regime == 'sideways':
-        print('➡️  Sideways market — being selective')
-        config.min_position_pct = 0.10   # ~$3,000 on $29.9k
-        config.max_position_pct = 0.134  # ~$4,000 on $29.9k
-    else:
-        # Bull market — restore full config targets ($4,000–$6,000 on $29.9k)
-        config.min_position_pct = 0.134
-        config.max_position_pct = 0.201
+        print('➡️  Sideways market — being selective, position sizing via multipliers')
 
     # ── VIX-Based Confidence Threshold ───────────────────────────────────────
     # Fetched once per cycle (cached daily by get_vix). VIX failure never aborts
@@ -678,7 +670,57 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 sizing = sizer.calculate(
                     portfolio_value, market_data.current_price, decision.confidence, hold
                 )
-                decision.position_size_usd  = sizing['position_usd']
+                # ── High Conviction Override ──────────────────────────────────
+                # Confidence >= 0.85 with a favorable regime (long in bull, short in
+                # bear) recalculates using a 20% ceiling instead of the standard 15%.
+                # Applied before regime/VIX multipliers so reductions still apply on top.
+                _is_high_conviction = (
+                    decision.confidence >= 0.85
+                    and (
+                        (trade_str == 'buy' and market_regime == 'bull')
+                        or (trade_str in ('short', 'sell_short') and market_regime == 'bear')
+                    )
+                )
+                if _is_high_conviction:
+                    print(
+                        f'📏 {ticker} — high conviction sizing: '
+                        f'confidence {decision.confidence:.2f} + favorable regime '
+                        f'→ max size 20%'
+                    )
+                    _hc_min_usd = portfolio_value * 0.10
+                    _hc_max_usd = portfolio_value * 0.20
+                    _conf_scalar = max(0.0, min(1.0, (decision.confidence - 0.75) / 0.25))
+                    sizing = dict(sizing)
+                    sizing['position_usd'] = round(
+                        _hc_min_usd + (_hc_max_usd - _hc_min_usd) * _conf_scalar, 2
+                    )
+
+                # ── Regime + VIX Position Size Multipliers ───────────────────
+                # Applied post-calculation so config min/max defaults are never
+                # mutated at runtime. Multipliers compound: final = base * regime * vix.
+                _regime_mult = 1.0
+                if market_regime == 'bull' and trade_str in ('short', 'sell_short'):
+                    _regime_mult = 0.85  # shorting against bull market
+                elif market_regime in ('sideways',):
+                    _regime_mult = 0.85  # neutral/uncertain direction
+                elif market_regime == 'bear' and trade_str == 'buy':
+                    _regime_mult = 0.85  # longing against bear market
+                # bull+long and bear+short stay at 1.0 (full tailwind)
+
+                _vix_mult = 1.0
+                if vix_regime == 'HIGH VOLATILITY':
+                    _vix_mult = 0.80
+                # NORMAL and LOW VOLATILITY stay at 1.0
+
+                _base_size = sizing['position_usd']
+                _adjusted_size = round(_base_size * _regime_mult * _vix_mult, 2)
+                if _regime_mult != 1.0 or _vix_mult != 1.0:
+                    print(
+                        f'📏 {ticker} — position size adjusted: '
+                        f'${_base_size:.2f} → ${_adjusted_size:.2f} '
+                        f'({market_regime} regime, VIX {vix_regime})'
+                    )
+                decision.position_size_usd  = _adjusted_size
                 decision.stop_loss_price    = sizer.get_stop_loss(
                     market_data.current_price, decision.trade_type, hold,
                     atr_pct=market_data.atr_pct, ticker=ticker,
@@ -745,6 +787,24 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                         print(
                             f'⏭️ {ticker} — SHORT skipped: price bouncing up on last 2 bars '
                             f'({_momentum:+.2f}%), waiting for momentum to resume down'
+                        )
+                        continue
+
+                # ── SPY Momentum Confirmation Gate ────────────────────────────
+                # Require SPY 2-bar momentum to align with trade direction.
+                # Skips on data failure (None) so a bad fetch never blocks a trade.
+                _spy_momentum = _get_2bar_momentum('SPY')
+                if _spy_momentum is not None:
+                    if trade_str == 'buy' and _spy_momentum < 0:
+                        print(
+                            f'⏭️ {ticker} — LONG skipped: SPY trending down '
+                            f'({_spy_momentum:+.2f}%), no market tailwind'
+                        )
+                        continue
+                    elif trade_str in ('short', 'sell_short') and _spy_momentum > 0:
+                        print(
+                            f'⏭️ {ticker} — SHORT skipped: SPY trending up '
+                            f'({_spy_momentum:+.2f}%), no market tailwind'
                         )
                         continue
 

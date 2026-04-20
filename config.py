@@ -98,8 +98,8 @@ class Config(BaseModel):
     allow_intraday: bool = True
 
     # ── Risk Management ───────────────────────────────────────────────────────
-    min_position_pct: float = 0.134     # Floor: 13.4% of portfolio at min confidence (~$4,000 on $29.9k)
-    max_position_pct: float = 0.201     # Ceiling: 20.1% of portfolio at max confidence (~$6,000 on $29.9k)
+    min_position_pct: float = 0.10      # Floor: 10% of portfolio at min confidence (~$4,000 on $40k)
+    max_position_pct: float = 0.15      # Ceiling: 15% of portfolio at max confidence (~$6,000 on $40k)
     circuit_breaker_pct: float = 0.10   # Hard stop: halt all trading at 10% drawdown
     confidence_threshold: float = 0.82  # Minimum agent confidence score to enter a trade
     max_positions: int = 15             # Maximum concurrent open positions
@@ -131,7 +131,7 @@ class Config(BaseModel):
     # and broad market ETFs for diversified signal generation.
     watchlist: list = [
         'NVDA', 'AMD', 'AAPL', 'META', 'AMZN',
-        'MSFT', 'GOOGL', 'JPM', 'PANW', 'MU', 'SHOP',
+        'MSFT', 'GOOGL', 'JPM', 'PANW', 'MU', 'COIN',
         'TSLA', 'NFLX', 'AVGO', 'UBER',
     ]
 
