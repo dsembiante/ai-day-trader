@@ -670,6 +670,8 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 sizing = sizer.calculate(
                     portfolio_value, market_data.current_price, decision.confidence, hold
                 )
+                trade_str = decision.trade_type.value if hasattr(decision.trade_type, 'value') else str(decision.trade_type)
+
                 # ── High Conviction Override ──────────────────────────────────
                 # Confidence >= 0.85 with a favorable regime (long in bull, short in
                 # bear) recalculates using a 20% ceiling instead of the standard 15%.
@@ -760,7 +762,6 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 # orb_breakout_up/down live on MarketData, not TradeDecision,
                 # so this override must happen here where both are in scope.
                 # Highest-conviction intraday signal: accept any fill price.
-                trade_str = decision.trade_type.value if hasattr(decision.trade_type, 'value') else str(decision.trade_type)
                 if (
                     decision.order_type == 'limit'
                     and decision.trade_type is not None
