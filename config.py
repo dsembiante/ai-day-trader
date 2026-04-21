@@ -131,8 +131,8 @@ class Config(BaseModel):
     # and broad market ETFs for diversified signal generation.
     watchlist: list = [
         'NVDA', 'AMD', 'AAPL', 'META', 'AMZN',
-        'MSFT', 'GOOGL', 'JPM', 'PANW', 'MU', 'SHOP',
-        'TSLA', 'NFLX', 'AVGO', 'UBER',
+        'MSFT', 'GOOGL', 'JPM', 'NFLX', 'AVGO',
+        'UBER', 'COST', 'CRM', 'QCOM', 'PYPL',
     ]
 
     # ── File Paths ────────────────────────────────────────────────────────────
