@@ -132,6 +132,7 @@ def run_position_monitor_only():
         print(f'[monitor_check] {et_now.strftime("%H:%M ET")} — checking {len(open_positions)} open positions...')
         monitor = PositionMonitor(executor)
         monitor.reconcile_bracket_exits()
+        monitor.reconcile_manual_closes()
         monitor.check_all_positions()
         monitor.check_dynamic_exits()
 
@@ -199,6 +200,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     monitor = PositionMonitor(executor)
     print(f'[position_monitor] Running checks on {len(executor.get_open_positions())} open positions...')
     monitor.reconcile_bracket_exits()
+    monitor.reconcile_manual_closes()
     monitor.check_all_positions()
     monitor.check_dynamic_exits()
 

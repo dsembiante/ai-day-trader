@@ -460,6 +460,94 @@ class PositionMonitor:
 
         return None
 
+    def reconcile_manual_closes(self):
+        """
+        Detect positions closed manually in Alpaca and record them in the DB.
+
+        Unlike reconcile_bracket_exits (which accepts any filled order and
+        classifies by bracket proximity), this method uses direction-matched
+        order lookup: a sell order for longs, a buy order for shorts. This
+        correctly identifies positions that were closed manually outside of
+        our bracket logic without mis-attributing entry orders as exits.
+
+        Called at the start of every scheduler cycle before check_all_positions.
+        Silent when all DB records match live Alpaca state.
+        """
+        open_trades = self.db.get_open_trades()
+        if not open_trades:
+            return
+
+        live_positions = {p['ticker'] for p in self.executor.get_open_positions()}
+
+        for trade in open_trades:
+            ticker = trade['ticker']
+            if ticker in live_positions:
+                continue  # Still open in Alpaca — nothing to do
+
+            trade_type  = trade.get('trade_type', 'buy')
+            entry_price = trade.get('entry_price')
+            shares      = trade.get('shares') or 0
+
+            exit_price, _ = self._get_filled_exit_order(ticker, trade_type)
+
+            if exit_price is None:
+                print(
+                    f'⚠️ {ticker} — open DB record found but no Alpaca position '
+                    f'or matching exit order — manual review needed'
+                )
+                continue
+
+            # Calculate P&L for the log message (update_trade_status recalculates
+            # it internally; this is only for the print below)
+            pnl = None
+            if entry_price and entry_price > 0 and shares > 0:
+                is_long = trade_type in ('buy', 'long')
+                pnl = (exit_price - entry_price) * shares if is_long \
+                      else (entry_price - exit_price) * shares
+
+            pnl_str = f'${pnl:.2f}' if pnl is not None else 'unknown'
+            print(
+                f'🔄 {ticker} — manually closed position reconciled: '
+                f'exit @ ${exit_price:.2f}, P&L: {pnl_str}'
+            )
+            try:
+                self.db.update_trade_status(
+                    trade['trade_id'],
+                    status='closed',
+                    exit_reason='manual_close',
+                    exit_price=exit_price,
+                )
+            except Exception as e:
+                log_error('reconcile_manual_closes', ticker, str(e))
+
+    # ── Private Helpers ───────────────────────────────────────────────────────
+
+    def _get_filled_exit_order(self, ticker: str, trade_type: str) -> 'tuple[float | None, object | None]':
+        """
+        Return (fill_price, order) for the most recent direction-matched exit
+        order for ticker, or (None, None) if none found.
+
+        Exit side: 'sell' for longs, 'buy' for shorts (buy-to-cover).
+        Queries the last 20 closed orders to handle cases where several orders
+        exist for the symbol around the time of the manual close.
+        """
+        try:
+            from alpaca.trading.requests import GetOrdersRequest
+            from alpaca.trading.enums import QueryOrderStatus
+            is_long   = trade_type in ('buy', 'long')
+            exit_side = 'sell' if is_long else 'buy'
+            req    = GetOrdersRequest(symbol=ticker, status=QueryOrderStatus.CLOSED, limit=20)
+            orders = self.executor.client.get_orders(req)
+            for order in orders:
+                if order.symbol != ticker or order.filled_avg_price is None:
+                    continue
+                side_str = str(order.side).lower().replace('orderside.', '')
+                if side_str == exit_side:
+                    return float(order.filled_avg_price), order
+        except Exception as e:
+            log_error('_get_filled_exit_order', ticker, str(e))
+        return None, None
+
     # ── Hold Period Enforcement ───────────────────────────────────────────────
 
     def _check_hold_expiry(self, trade: dict):
