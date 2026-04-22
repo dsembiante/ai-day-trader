@@ -663,6 +663,19 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
 
             # ── Position Sizing & Execution ───────────────────────────────────
             if decision.execute and decision.trade_type:
+                # ── Earnings Day Gate ─────────────────────────────────────────
+                # Block all entries on earnings day regardless of signal strength.
+                # next_earnings_date is fetched from yfinance calendar at data
+                # collection time; comparison is date-string equality so no
+                # timezone conversion is needed.
+                _earnings_date = market_data.next_earnings_date
+                if _earnings_date and _earnings_date == datetime.now(ZoneInfo('America/New_York')).date().isoformat():
+                    print(
+                        f'⏭️ {ticker} — earnings today ({_earnings_date}), '
+                        f'skipping to avoid earnings volatility'
+                    )
+                    continue
+
                 # Resolve hold period — default to SWING if the agent omitted it
                 requested_hold = HoldPeriod(decision.hold_period) if decision.hold_period else HoldPeriod.SWING
                 hold = sizer.get_hold_period_safe(requested_hold)
