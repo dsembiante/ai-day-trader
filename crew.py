@@ -702,10 +702,10 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                     print(
                         f'📏 {ticker} — high conviction sizing: '
                         f'confidence {decision.confidence:.2f} + favorable regime '
-                        f'→ max size 25%'
+                        f'→ max size 30%'
                     )
                     _hc_min_usd = portfolio_value * 0.10
-                    _hc_max_usd = portfolio_value * 0.25
+                    _hc_max_usd = portfolio_value * 0.30
                     _conf_scalar = max(0.0, min(1.0, (decision.confidence - 0.75) / 0.25))
                     sizing = dict(sizing)
                     sizing['position_usd'] = round(
