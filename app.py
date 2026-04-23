@@ -119,37 +119,71 @@ with tab3:
 
 # ── Tab 4: Full Trade History ─────────────────────────────────────────────────
 with tab4:
-    st.subheader('Full Trade History')
+    st.subheader('Trade History')
 
     all_trades = db.get_all_trades()
     if all_trades:
         df = pd.DataFrame(all_trades)
 
         # ── Filters ───────────────────────────────────────────────────────────
-        # Three side-by-side multiselects allow the user to slice the trade log
-        # without requiring a separate page or form submission.
         c1, c2, c3 = st.columns(3)
         ticker_f = c1.multiselect('Ticker',     df['ticker'].unique()     if 'ticker'     in df else [])
         type_f   = c2.multiselect('Trade Type', df['trade_type'].unique() if 'trade_type' in df else [])
         hold_f   = c3.multiselect('Hold Period', ['intraday', 'swing', 'position'])
 
-        # Apply each filter only when the user has selected at least one value;
-        # empty selection means "show all" (no filter applied)
         if ticker_f: df = df[df['ticker'].isin(ticker_f)]
         if type_f:   df = df[df['trade_type'].isin(type_f)]
         if hold_f:   df = df[df['hold_period'].isin(hold_f)]
 
-        st.dataframe(df)
+        # ── Column Selection & Formatting ─────────────────────────────────────
+        display = pd.DataFrame()
+        display['Date']        = pd.to_datetime(df['entry_time']).dt.date if 'entry_time' in df else None
+        display['Ticker']      = df.get('ticker')
+        display['Type']        = df.get('trade_type')
+        display['Entry Price'] = pd.to_numeric(df.get('entry_price'),  errors='coerce').round(2)
+        display['Exit Price']  = pd.to_numeric(df.get('exit_price'),   errors='coerce').round(2)
+        display['P&L ($)']     = pd.to_numeric(df.get('pnl'),          errors='coerce').round(2)
+        display['P&L (%)']     = (pd.to_numeric(df.get('pnl_pct'),     errors='coerce') * 100).round(2)
+        display['Exit Reason'] = df.get('exit_reason')
+        display['Confidence']  = pd.to_numeric(df.get('confidence_at_entry'), errors='coerce').round(2)
+
+        # ── Summary Row ───────────────────────────────────────────────────────
+        closed = display[display['P&L ($)'].notna()]
+        total_pnl  = closed['P&L ($)'].sum()
+        win_rate   = (closed['P&L ($)'] > 0).mean() * 100 if len(closed) else 0.0
+        avg_pnl    = closed['P&L ($)'].mean() if len(closed) else 0.0
+
+        sm1, sm2, sm3 = st.columns(3)
+        sm1.metric('Total P&L',       f'${total_pnl:+,.2f}')
+        sm2.metric('Win Rate',         f'{win_rate:.1f}%')
+        sm3.metric('Avg P&L / Trade',  f'${avg_pnl:+,.2f}')
+
+        # ── Sortable Table with P&L Coloring ─────────────────────────────────
+        def _pnl_color(val):
+            if pd.isna(val):
+                return ''
+            return 'color: #2ecc71; font-weight: bold' if val > 0 else 'color: #e74c3c; font-weight: bold'
+
+        styled = (
+            display.style
+            .format({
+                'Entry Price': '${:.2f}',
+                'Exit Price':  '${:.2f}',
+                'P&L ($)':     '${:+,.2f}',
+                'P&L (%)':     '{:+.2f}%',
+                'Confidence':  '{:.2f}',
+            }, na_rep='—')
+            .applymap(_pnl_color, subset=['P&L ($)', 'P&L (%)'])
+        )
+        st.dataframe(styled, use_container_width=True, hide_index=True)
 
         # ── Agent Reasoning Drill-Down ────────────────────────────────────────
-        # Preserving agent reasoning in the database enables post-trade review
-        # of why a decision was made — valuable for strategy tuning.
-        if len(all_trades) > 0 and st.checkbox('Show agent reasoning for last trade'):
-            last = all_trades[0]  # Trades are ordered entry_time DESC
-            st.write('**Bull Agent:**',        last.get('bull_reasoning', ''))
-            st.write('**Bear Agent:**',         last.get('bear_reasoning', ''))
-            st.write('**Risk Manager:**',       last.get('risk_manager_reasoning', ''))
-            st.write('**Hold Period Rationale:**', last.get('hold_period_reasoning', ''))
+        if st.checkbox('Show agent reasoning for last trade'):
+            last = all_trades[0]
+            st.write('**Bull Agent:**',            last.get('bull_reasoning', ''))
+            st.write('**Bear Agent:**',             last.get('bear_reasoning', ''))
+            st.write('**Risk Manager:**',           last.get('risk_manager_reasoning', ''))
+            st.write('**Hold Period Rationale:**',  last.get('hold_period_reasoning', ''))
     else:
         st.info('No trades yet')
 
