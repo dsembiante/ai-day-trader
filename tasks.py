@@ -254,8 +254,7 @@ def create_risk_manager_task(agent, ticker: str, bull_task: Task, bear_task: Tas
     )
 
 
-def create_portfolio_task(agent, ticker: str, risk_task: Task, open_positions: list,
-                          open_longs: int = 0, open_shorts: int = 0) -> Task:
+def create_portfolio_task(agent, ticker: str, risk_task: Task, open_positions: list) -> Task:
     """
     Final portfolio-level gate before a trade decision reaches the executor.
 
@@ -264,7 +263,9 @@ def create_portfolio_task(agent, ticker: str, risk_task: Task, open_positions: l
         2. Duplicate position check — prevents doubling up on the same ticker
         3. Sector concentration — flags over-exposure to a single sector
         4. Multi-signal confirmation — requires at least 2 confirming signals
-        5. Direction concentration — blocks entry if same-direction cap is reached
+
+    Direction concentration is enforced as a hard code gate in crew.py via
+    an 80% portfolio exposure cap, not here in the LLM prompt.
 
     The agent is instructed to pass the TradeDecision through unchanged if
     all checks pass, or flip execute=false with an explanation in
@@ -278,8 +279,6 @@ def create_portfolio_task(agent, ticker: str, risk_task: Task, open_positions: l
         risk_task:      The risk manager task whose output is passed as context.
         open_positions: Current open positions list from TradeExecutor.get_open_positions(),
                         used to populate the prompt with live portfolio state.
-        open_longs:     Count of currently open long positions.
-        open_shorts:    Count of currently open short positions.
 
     Returns:
         A configured Task that receives the risk manager output as context.
@@ -289,7 +288,6 @@ def create_portfolio_task(agent, ticker: str, risk_task: Task, open_positions: l
             You are the Portfolio Manager reviewing the trade decision for {ticker}.
             Current open positions: {len(open_positions)} of {config.max_positions} maximum.
             Open tickers: {[p['ticker'] for p in open_positions]}
-            Open longs: {open_longs} | Open shorts: {open_shorts} | Max per direction: {config.max_same_direction_positions}
 
             CRITICAL PASSTHROUGH RULE: If the Risk Manager's decision has execute=false, you MUST return that exact JSON unchanged. You are absolutely forbidden from changing execute from false to true. You are absolutely forbidden from inventing entry_price, stop_loss_price, take_profit_price, or position_size_usd values. Your only job when execute=false is to pass the decision through unmodified.
 
@@ -302,9 +300,6 @@ def create_portfolio_task(agent, ticker: str, risk_task: Task, open_positions: l
             3. Adding this position does not over-concentrate in one sector
             4. Multi-signal confirmation: the analyst reasoning mentions at least 2 confirming signals
                (look for "2/4", "3/4", or "4/4" in key_factors — if only "1/4" is present, set execute=false)
-            5. Direction concentration: if the proposed trade is buy/long and open_longs ({open_longs}) already equals {config.max_same_direction_positions}, set execute=false.
-               If the proposed trade is short/sell and open_shorts ({open_shorts}) already equals {config.max_same_direction_positions}, set execute=false.
-               Note "max same-direction positions reached" in risk_manager_reasoning if this fires.
 
             If condition 4 fails, set execute=false and note "insufficient signal confirmation" in risk_manager_reasoning.
             Return the same TradeDecision JSON from context, but set execute=false

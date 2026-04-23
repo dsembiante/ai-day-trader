@@ -249,10 +249,6 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     db_open_tickers     = {t['ticker'] for t in db.get_open_trades()}
     trades_executed = 0
 
-    # Direction counts — used by portfolio task to enforce same-direction cap
-    open_longs  = sum(1 for p in open_positions if float(p.get('qty', 0)) > 0)
-    open_shorts = sum(1 for p in open_positions if float(p.get('qty', 0)) < 0)
-
     # ── Market Regime Detection ───────────────────────────────────────────────
     # Detected once per cycle using SPY golden/death cross — shared across all
     # tickers so agents operate with consistent macro context. Position sizing
@@ -273,7 +269,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
         log_error('spy_intraday_check', 'SPY', str(e))
 
     print(f'📈 Market regime: {market_regime.upper()}')
-    print(f'📊 Open positions: {open_longs} longs, {open_shorts} shorts (max {config.max_same_direction_positions} per direction)')
+    print(f'📊 Open positions: {len(open_positions)} ({sum(abs(p.get("market_value", 0)) for p in open_positions) / portfolio_value * 100:.1f}% of portfolio deployed)')
 
     if market_regime == 'bear':
         print('🐻 Bear market detected — favoring shorts, position sizing via multipliers')
@@ -574,7 +570,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
             bull_task      = create_bull_task(bull_agent, ticker, summary)
             bear_task      = create_bear_task(bear_agent, ticker, summary)
             risk_task      = create_risk_manager_task(risk_agent, ticker, bull_task, bear_task)
-            portfolio_task = create_portfolio_task(portfolio_agent, ticker, risk_task, open_positions, open_longs, open_shorts)
+            portfolio_task = create_portfolio_task(portfolio_agent, ticker, risk_task, open_positions)
 
             # ── Crew Execution ────────────────────────────────────────────────
             # Process.sequential runs tasks in order: bull → bear → risk → portfolio.
@@ -673,6 +669,19 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                     print(
                         f'⏭️ {ticker} — earnings today ({_earnings_date}), '
                         f'skipping to avoid earnings volatility'
+                    )
+                    continue
+
+                # ── Exposure Cap Gate ─────────────────────────────────────────
+                # Hard block when total deployed capital >= 80% of portfolio.
+                # Uses the snapshot of open_positions taken at cycle start;
+                # abs() handles shorts whose market_value is negative in Alpaca.
+                _total_exposure = sum(abs(p.get('market_value', 0)) for p in open_positions)
+                _exposure_pct   = (_total_exposure / portfolio_value * 100) if portfolio_value else 0.0
+                if _exposure_pct >= 80.0:
+                    print(
+                        f'⏭️ {ticker} — exposure cap reached '
+                        f'({_exposure_pct:.1f}% of portfolio deployed, 80% max)'
                     )
                     continue
 
@@ -985,9 +994,7 @@ def run_single_ticker(ticker: str, headline: str, position_multiplier: float = 1
         risk_task      = create_risk_manager_task(risk_agent, ticker, bull_task, bear_task)
 
         open_positions = executor.get_open_positions()
-        news_open_longs  = sum(1 for p in open_positions if float(p.get('qty', 0)) > 0)
-        news_open_shorts = sum(1 for p in open_positions if float(p.get('qty', 0)) < 0)
-        portfolio_task = create_portfolio_task(portfolio_agent, ticker, risk_task, open_positions, news_open_longs, news_open_shorts)
+        portfolio_task = create_portfolio_task(portfolio_agent, ticker, risk_task, open_positions)
 
         crew = Crew(
             agents=[bull_agent, bear_agent, risk_agent, portfolio_agent],
