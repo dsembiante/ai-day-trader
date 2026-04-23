@@ -311,7 +311,7 @@ class DataCollector:
 
     def get_opening_range(self, ticker: str) -> tuple:
         """
-        Calculate the opening range (9:30–10:00 AM ET) from 1-minute Alpaca bars.
+        Calculate the opening range (9:30–9:45 AM ET) from 1-minute Alpaca bars.
         Returns (orh, orl, orm, orb_breakout_up, orb_breakout_down) or all Nones.
         """
         try:
@@ -329,7 +329,7 @@ class DataCollector:
                 ts = ts.dt.tz_localize('UTC')
             df['timestamp'] = ts.dt.tz_convert('America/New_York')
             df = df.set_index('timestamp')
-            open_bars = df.between_time('09:30', '09:59')
+            open_bars = df.between_time('09:30', '09:44')
             if open_bars.empty:
                 return None, None, None, None, None
             orh = float(open_bars['high'].max())
