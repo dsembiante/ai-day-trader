@@ -173,7 +173,7 @@ with tab4:
                 'P&L (%)':     '{:+.2f}%',
                 'Confidence':  '{:.2f}',
             }, na_rep='—')
-            .applymap(_pnl_color, subset=['P&L ($)', 'P&L (%)'])
+            .map(_pnl_color, subset=['P&L ($)', 'P&L (%)'])
         )
         st.dataframe(styled, use_container_width=True, hide_index=True)
 
