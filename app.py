@@ -186,14 +186,15 @@ with tab6:
 
     # Split into two columns for a balanced layout; values are read directly
     # from config so they always reflect the currently loaded settings
+    from config import config as _cfg
     c1, c2 = st.columns(2)
     with c1:
         st.metric('Circuit Breaker',   '10% drawdown')
-        st.metric('Max Position Size', '2% of portfolio')
-        st.metric('Min Confidence',    '75%')
+        st.metric('Max Position Size', '25% standard / 30% high conviction')
+        st.metric('Min Confidence',    '0.82 (normal VIX) / 0.85 (high VIX)')
     with c2:
-        st.metric('Max Positions',  '15')
-        st.metric('Run Mode',       'Check Settings tab')
+        st.metric('Max Positions',  '4 per direction')
+        st.metric('Run Mode',       str(_cfg.run_mode).replace('RunMode.', ''))
         st.metric('Trading Mode',   'Paper')
     # TODO: Pull live circuit breaker status and current drawdown from
     # CircuitBreaker().check() for dynamic red/green state display

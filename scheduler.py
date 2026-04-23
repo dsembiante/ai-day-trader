@@ -158,10 +158,19 @@ def run_monitor_check():
 
 def end_of_day():
     """
-    4:00 PM post-market job — generates the daily PDF performance report.
-    Runs after market close so all fills and P&L are final before the
-    report is compiled.
+    4:00 PM post-market job — records daily performance and generates the
+    daily PDF report. Runs after market close so all fills and P&L are
+    final. save_daily_performance is called here (not in close_all_intraday)
+    so the record is always written even on days with no open positions at EOD.
     """
+    from trade_executor import TradeExecutor
+    from database import Database
+    try:
+        portfolio_value = TradeExecutor().get_portfolio_value()
+        Database().save_daily_performance(portfolio_value)
+        print(f'📊 EOD daily_performance saved — portfolio: ${portfolio_value:,.2f}')
+    except Exception as e:
+        print(f'⚠️  EOD daily_performance failed: {e}')
     print(f'{datetime.now()} — Generating end of day report')
     generate_daily_report()
 
