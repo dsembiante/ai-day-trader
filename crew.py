@@ -304,6 +304,7 @@ def run_gap_fade_ticker(
             print(f'❌ DB insert failed for {ticker}: {e}')
             log_error('database_insert', ticker, str(e))
         log_trade(trade_record)
+        return True
 
 
 def run_vwap_reversion_ticker(
@@ -816,11 +817,12 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 )
 
             # ── Multi-Strategy Dispatchers ────────────────────────────────────
+            gap_fade_traded = False
             if config.gap_fade_enabled and gap_fade_entries_open:
-                run_gap_fade_ticker(
+                gap_fade_traded = bool(run_gap_fade_ticker(
                     ticker, market_data, db, executor, config,
                     et_now, market_regime, vix_regime,
-                )
+                ))
 
             if vwap_reversion_open:
                 run_vwap_reversion_ticker(
@@ -828,8 +830,9 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                     et_now, market_regime, vix_regime,
                 )
 
-            # Momentum — 9:45–11:30 AM ET window only
-            if not momentum_entries_open:
+            # Momentum — skip if gap fade already traded this ticker
+            # or if outside the momentum entry window
+            if not momentum_entries_open or gap_fade_traded:
                 continue
 
             # ── Market Data Summary ───────────────────────────────────────────
