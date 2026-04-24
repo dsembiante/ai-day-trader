@@ -21,11 +21,15 @@ from crewai import Crew, Process
 from agents import (
     create_bull_agent, create_bear_agent,
     create_risk_manager, create_portfolio_manager,
+    create_gap_fade_analyst,
+    create_vwap_reversion_analyst,
 )
 from tasks import (
     create_bull_task, create_bear_task,
     create_risk_manager_task, create_portfolio_task,
     create_exit_bull_task, create_exit_bear_task,
+    create_gap_fade_task,
+    create_vwap_reversion_task,
 )
 from models import TradeDecision
 from data_collector import DataCollector
@@ -157,6 +161,297 @@ def run_position_monitor_only():
         print(f'[monitor_check] Error: {e}')
 
 
+# ── Multi-Strategy Pipeline Functions ────────────────────────────────────────
+
+def run_gap_fade_ticker(
+    ticker, market_data, db, executor, config,
+    et_now, market_regime, vix_regime,
+):
+    """Gap fade pipeline for a single ticker. Returns immediately if not qualified."""
+    if market_data.gap_pct is None or abs(market_data.gap_pct) < config.gap_fade_min_gap_pct:
+        return
+
+    _earnings_date = market_data.next_earnings_date
+    if _earnings_date and _earnings_date == et_now.date().isoformat():
+        print(f'⏭️  {ticker} — gap fade skipped: earnings today')
+        return
+
+    open_positions  = executor.get_open_positions()
+    portfolio_value = executor.get_portfolio_value()
+    _total_exposure = sum(abs(float(p.get('market_value', 0))) for p in open_positions)
+    if portfolio_value and _total_exposure / portfolio_value >= 0.80:
+        print(f'⏭️  {ticker} — gap fade skipped: exposure cap reached')
+        return
+
+    agent  = create_gap_fade_analyst()
+    task   = create_gap_fade_task(agent, ticker, market_data)
+    _crew  = Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=False)
+    result = _crew.kickoff()
+
+    if hasattr(result, 'json_dict') and result.json_dict:
+        raw_dict = result.json_dict
+    else:
+        raw = result.raw if hasattr(result, 'raw') else str(result)
+        raw = raw.strip()
+        if raw.startswith('```'):
+            raw = raw.split('\n', 1)[-1]
+        if raw.endswith('```'):
+            raw = raw.rsplit('```', 1)[0]
+        raw_dict = json.loads(raw.strip())
+
+    execute    = raw_dict.get('execute', False)
+    confidence = float(raw_dict.get('confidence', 0.0))
+    direction  = raw_dict.get('direction')
+    reasoning  = raw_dict.get('reasoning', '')
+    print(
+        f'🤖 {ticker} [GAP FADE]: execute={execute} | '
+        f'confidence={confidence:.2f} | direction={direction} | '
+        f'{reasoning[:80]}'
+    )
+
+    if not execute or confidence < config.confidence_threshold:
+        return
+
+    trade_str = 'buy' if direction == 'long' else 'short'
+    hold      = HoldPeriod.INTRADAY
+    sizing    = sizer.calculate(portfolio_value, market_data.current_price, confidence, hold)
+
+    _regime_mult = 1.0
+    if market_regime == 'bull' and trade_str in ('short', 'sell_short'):
+        _regime_mult = 0.85
+    elif market_regime == 'sideways':
+        _regime_mult = 0.85
+    elif market_regime == 'bear' and trade_str == 'buy':
+        _regime_mult = 0.85
+    _vix_mult      = 0.80 if vix_regime == 'HIGH VOLATILITY' else 1.0
+    _adjusted_size = round(sizing['position_usd'] * _regime_mult * _vix_mult, 2)
+
+    stop_loss   = sizer.get_stop_loss(
+        market_data.current_price, trade_str, hold,
+        atr_pct=market_data.atr_pct, ticker=ticker,
+    )
+    take_profit = (
+        raw_dict.get('gap_fade_target')
+        or sizer.get_take_profit(
+            market_data.current_price, trade_str, hold,
+            atr_pct=market_data.atr_pct, ticker=ticker,
+        )
+    )
+
+    decision = TradeDecision(
+        ticker=ticker,
+        execute=True,
+        trade_type=trade_str,
+        order_type='limit',
+        hold_period=HoldPeriod.INTRADAY.value,
+        confidence=confidence,
+        position_size_usd=_adjusted_size,
+        entry_price=market_data.current_price,
+        stop_loss_price=stop_loss,
+        take_profit_price=take_profit,
+        max_hold_days=1,
+        risk_manager_reasoning=reasoning,
+        hold_period_reasoning='intraday gap fade',
+        data_sources_available=market_data.data_sources_used,
+    )
+
+    order_result  = executor.execute_trade(decision)
+    _order_status = order_result.get('status', 'unknown')
+    _order_id     = order_result.get('order_id', '')
+    print(f'📋 {ticker} [GAP FADE] order: {_order_status}{f" | id={_order_id[:8]}" if _order_id else ""}')
+
+    if order_result.get('status') == 'placed':
+        actual_entry_price = market_data.current_price
+        try:
+            import time as _time; _time.sleep(2)
+            for _pos in executor.get_open_positions():
+                if _pos['ticker'] == ticker and _pos.get('avg_entry_price'):
+                    actual_entry_price = _pos['avg_entry_price']
+                    break
+        except Exception:
+            pass
+        trade_record = {
+            'trade_id':               str(uuid.uuid4()),
+            'ticker':                 ticker,
+            'trade_type':             decision.trade_type,
+            'order_type':             decision.order_type,
+            'hold_period':            decision.hold_period,
+            'max_hold_days':          1,
+            'entry_price':            actual_entry_price,
+            'exit_price':             None,
+            'shares':                 sizing['shares'],
+            'position_size_usd':      _adjusted_size,
+            'stop_loss_price':        stop_loss,
+            'take_profit_price':      take_profit,
+            'pnl':                    None,
+            'pnl_pct':                None,
+            'status':                 'open',
+            'exit_reason':            None,
+            'confidence_at_entry':    confidence,
+            'bull_reasoning':         '',
+            'bear_reasoning':         '',
+            'risk_manager_reasoning': reasoning,
+            'hold_period_reasoning':  'intraday gap fade',
+            'data_sources_available': str(market_data.data_sources_used.model_dump()),
+            'atr_pct':                market_data.atr_pct,
+            'entry_time':             datetime.now().isoformat(),
+            'exit_time':              None,
+        }
+        try:
+            db.insert_trade(trade_record)
+            print(f'✅ Gap fade trade record saved to DB: {ticker}')
+        except Exception as e:
+            print(f'❌ DB insert failed for {ticker}: {e}')
+            log_error('database_insert', ticker, str(e))
+        log_trade(trade_record)
+
+
+def run_vwap_reversion_ticker(
+    ticker, market_data, db, executor, config,
+    et_now, market_regime, vix_regime,
+):
+    """VWAP reversion pipeline for a single ticker. Returns immediately if not qualified."""
+    if not market_data.vwap or not market_data.current_price:
+        return
+    vwap_margin_pct = _get_vwap_margin_pct(market_data.current_price, market_data.vwap)
+    if abs(vwap_margin_pct) < 1.5:
+        return
+
+    _earnings_date = market_data.next_earnings_date
+    if _earnings_date and _earnings_date == et_now.date().isoformat():
+        print(f'⏭️  {ticker} — VWAP reversion skipped: earnings today')
+        return
+
+    open_positions  = executor.get_open_positions()
+    portfolio_value = executor.get_portfolio_value()
+    _total_exposure = sum(abs(float(p.get('market_value', 0))) for p in open_positions)
+    if portfolio_value and _total_exposure / portfolio_value >= 0.80:
+        print(f'⏭️  {ticker} — VWAP reversion skipped: exposure cap reached')
+        return
+
+    agent  = create_vwap_reversion_analyst()
+    task   = create_vwap_reversion_task(agent, ticker, market_data)
+    _crew  = Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=False)
+    result = _crew.kickoff()
+
+    if hasattr(result, 'json_dict') and result.json_dict:
+        raw_dict = result.json_dict
+    else:
+        raw = result.raw if hasattr(result, 'raw') else str(result)
+        raw = raw.strip()
+        if raw.startswith('```'):
+            raw = raw.split('\n', 1)[-1]
+        if raw.endswith('```'):
+            raw = raw.rsplit('```', 1)[0]
+        raw_dict = json.loads(raw.strip())
+
+    execute    = raw_dict.get('execute', False)
+    confidence = float(raw_dict.get('confidence', 0.0))
+    direction  = raw_dict.get('direction')
+    reasoning  = raw_dict.get('reasoning', '')
+    print(
+        f'🤖 {ticker} [VWAP REVERSION]: execute={execute} | '
+        f'confidence={confidence:.2f} | direction={direction} | '
+        f'{reasoning[:80]}'
+    )
+
+    if not execute or confidence < config.confidence_threshold:
+        return
+
+    trade_str = 'buy' if direction == 'long' else 'short'
+    hold      = HoldPeriod.INTRADAY
+    sizing    = sizer.calculate(portfolio_value, market_data.current_price, confidence, hold)
+
+    _regime_mult = 1.0
+    if market_regime == 'bull' and trade_str in ('short', 'sell_short'):
+        _regime_mult = 0.85
+    elif market_regime == 'sideways':
+        _regime_mult = 0.85
+    elif market_regime == 'bear' and trade_str == 'buy':
+        _regime_mult = 0.85
+    _vix_mult      = 0.80 if vix_regime == 'HIGH VOLATILITY' else 1.0
+    _adjusted_size = round(sizing['position_usd'] * _regime_mult * _vix_mult, 2)
+
+    stop_loss   = sizer.get_stop_loss(
+        market_data.current_price, trade_str, hold,
+        atr_pct=market_data.atr_pct, ticker=ticker,
+    )
+    take_profit = (
+        raw_dict.get('vwap_target')
+        or sizer.get_take_profit(
+            market_data.current_price, trade_str, hold,
+            atr_pct=market_data.atr_pct, ticker=ticker,
+        )
+    )
+
+    decision = TradeDecision(
+        ticker=ticker,
+        execute=True,
+        trade_type=trade_str,
+        order_type='limit',
+        hold_period=HoldPeriod.INTRADAY.value,
+        confidence=confidence,
+        position_size_usd=_adjusted_size,
+        entry_price=market_data.current_price,
+        stop_loss_price=stop_loss,
+        take_profit_price=take_profit,
+        max_hold_days=1,
+        risk_manager_reasoning=reasoning,
+        hold_period_reasoning='intraday vwap reversion',
+        data_sources_available=market_data.data_sources_used,
+    )
+
+    order_result  = executor.execute_trade(decision)
+    _order_status = order_result.get('status', 'unknown')
+    _order_id     = order_result.get('order_id', '')
+    print(f'📋 {ticker} [VWAP REVERSION] order: {_order_status}{f" | id={_order_id[:8]}" if _order_id else ""}')
+
+    if order_result.get('status') == 'placed':
+        actual_entry_price = market_data.current_price
+        try:
+            import time as _time; _time.sleep(2)
+            for _pos in executor.get_open_positions():
+                if _pos['ticker'] == ticker and _pos.get('avg_entry_price'):
+                    actual_entry_price = _pos['avg_entry_price']
+                    break
+        except Exception:
+            pass
+        trade_record = {
+            'trade_id':               str(uuid.uuid4()),
+            'ticker':                 ticker,
+            'trade_type':             decision.trade_type,
+            'order_type':             decision.order_type,
+            'hold_period':            decision.hold_period,
+            'max_hold_days':          1,
+            'entry_price':            actual_entry_price,
+            'exit_price':             None,
+            'shares':                 sizing['shares'],
+            'position_size_usd':      _adjusted_size,
+            'stop_loss_price':        stop_loss,
+            'take_profit_price':      take_profit,
+            'pnl':                    None,
+            'pnl_pct':                None,
+            'status':                 'open',
+            'exit_reason':            None,
+            'confidence_at_entry':    confidence,
+            'bull_reasoning':         '',
+            'bear_reasoning':         '',
+            'risk_manager_reasoning': reasoning,
+            'hold_period_reasoning':  'intraday vwap reversion',
+            'data_sources_available': str(market_data.data_sources_used.model_dump()),
+            'atr_pct':                market_data.atr_pct,
+            'entry_time':             datetime.now().isoformat(),
+            'exit_time':              None,
+        }
+        try:
+            db.insert_trade(trade_record)
+            print(f'✅ VWAP reversion trade record saved to DB: {ticker}')
+        except Exception as e:
+            print(f'❌ DB insert failed for {ticker}: {e}')
+            log_error('database_insert', ticker, str(e))
+        log_trade(trade_record)
+
+
 # ── Main Cycle ────────────────────────────────────────────────────────────────
 
 def run_trading_cycle(circuit_breaker: CircuitBreaker):
@@ -233,12 +528,20 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
         log_run(run_log)
         return
 
-    # ── Gate 3: 11:30 AM Entry Cutoff ────────────────────────────────────────
-    # After 11:30 AM ET (10:30 AM CT), all new entry evaluation is blocked.
-    # Position monitoring has already completed above — this gate only prevents
-    # the entry loop below.
-    if et_now.time() >= time(11, 30):
-        print(f'⛔ Past 11:30 AM ET — entries closed, monitoring positions only')
+    # ── Gate 3: Time-Window Flags ─────────────────────────────────────────────
+    # Each strategy has its own active window. The per-ticker loop runs as long
+    # as at least one strategy has an open window; the momentum pipeline gets a
+    # continue gate inside the loop when its own window has closed.
+    momentum_entries_open = et_now.time() < time(11, 30)
+    gap_fade_entries_open = et_now.time() < time(10, 30)
+    vwap_reversion_open   = (
+        config.vwap_reversion_enabled and
+        time(12, 0) <= et_now.time() <= time(14, 30)
+    )
+
+    if not momentum_entries_open and not vwap_reversion_open:
+        if et_now.time() < time(12, 0):
+            print(f'⛔ Past 11:30 AM ET — entries closed, monitoring positions only')
         log_run(run_log)
         return
 
@@ -511,6 +814,23 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                     f'⚠️ {ticker} ATR {_ticker_atr:.2f}% — high volatility, '
                     f'requiring 3/4 signals and 0.85 confidence'
                 )
+
+            # ── Multi-Strategy Dispatchers ────────────────────────────────────
+            if config.gap_fade_enabled and gap_fade_entries_open:
+                run_gap_fade_ticker(
+                    ticker, market_data, db, executor, config,
+                    et_now, market_regime, vix_regime,
+                )
+
+            if vwap_reversion_open:
+                run_vwap_reversion_ticker(
+                    ticker, market_data, db, executor, config,
+                    et_now, market_regime, vix_regime,
+                )
+
+            # Momentum — 9:45–11:30 AM ET window only
+            if not momentum_entries_open:
+                continue
 
             # ── Market Data Summary ───────────────────────────────────────────
             # Pre-format all signals into a single string injected into each

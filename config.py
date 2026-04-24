@@ -126,6 +126,14 @@ class Config(BaseModel):
     position_take_profit_pct: float = 0.20
     position_max_days: int = 20
 
+    # ── Multi-Strategy Configuration ─────────────────────────────────────────
+    gap_fade_enabled: bool = False           # Gap fade strategy (9:45–10:30 AM ET)
+    vwap_reversion_enabled: bool = False     # VWAP reversion strategy (12:00–2:30 PM ET)
+    gap_fade_min_gap_pct: float = 5.0        # Minimum gap % to qualify for gap fade
+    gap_fade_window_end: str = "10:30"       # ET time to stop gap fade entries
+    vwap_reversion_window_start: str = "12:00"  # ET time to start VWAP reversion
+    vwap_reversion_window_end: str = "14:30"    # ET time to stop VWAP reversion
+
     # ── Watchlist ─────────────────────────────────────────────────────────────
     # Symbols scanned on every agent cycle. Mix of mega-cap tech, financials,
     # and broad market ETFs for diversified signal generation.

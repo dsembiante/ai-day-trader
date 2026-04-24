@@ -414,3 +414,126 @@ def create_exit_bear_task(agent, ticker: str, market_data_summary: str, entry_pr
         expected_output='JSON object with ticker, exit, trade_type, confidence, reasoning, key_factors',
         agent=agent,
     )
+
+
+# ── Multi-Strategy Tasks ──────────────────────────────────────────────────────
+
+def create_gap_fade_task(agent, ticker: str, market_data) -> Task:
+    open_price = (
+        round(market_data.previous_close * (1 + market_data.gap_pct / 100), 2)
+        if market_data.previous_close is not None and market_data.gap_pct is not None
+        else None
+    )
+    vwap_margin_pct = (
+        round((market_data.current_price - market_data.vwap) / market_data.vwap * 100, 2)
+        if market_data.vwap
+        else None
+    )
+    return Task(
+        description=f'''
+            Analyze {ticker} for a GAP FADE opportunity using this market data:
+            - Previous close:    {market_data.previous_close}
+            - Estimated open:   {open_price}
+            - Current price:    {market_data.current_price}
+            - Gap %:            {market_data.gap_pct}%
+            - VWAP:             {market_data.vwap}
+            - VWAP margin %:    {vwap_margin_pct}%
+            - RSI:              {market_data.rsi}
+            - Volume ratio:     {market_data.volume_ratio}x
+            - Pre-market price: {market_data.pre_market_price}
+
+            Gap fading means trading AGAINST the gap direction, expecting price to revert.
+            Gap-up fade: trade SHORT (opened too high, expect pullback toward previous close).
+            Gap-down fade: trade LONG (opened too low, expect bounce toward previous close).
+
+            Evaluate each of these four signals and count how many are confirmed:
+
+            Signal 1 — Gap size (minimum threshold):
+            - Gap-up fade:   gap_pct >= +5% = CONFIRMED ✓  |  gap_pct < +5% = NOT confirmed ✗
+            - Gap-down fade: gap_pct <= -5% = CONFIRMED ✓  |  gap_pct > -5% = NOT confirmed ✗
+
+            Signal 2 — RSI extreme:
+            - Gap-up fade:   RSI > 70 (overbought) = CONFIRMED ✓  |  RSI <= 70 = NOT confirmed ✗
+            - Gap-down fade: RSI < 30 (oversold)   = CONFIRMED ✓  |  RSI >= 30 = NOT confirmed ✗
+
+            Signal 3 — Price extended from VWAP in gap direction:
+            - Gap-up fade:   vwap_margin_pct >= +1.5% = CONFIRMED ✓  |  < +1.5% = NOT confirmed ✗
+            - Gap-down fade: vwap_margin_pct <= -1.5% = CONFIRMED ✓  |  > -1.5% = NOT confirmed ✗
+
+            Signal 4 — Volume declining from opening spike:
+            - volume_ratio < 1.5 = CONFIRMED ✓ (opening surge fading)  |  >= 1.5 = NOT confirmed ✗
+
+            Count how many of the 4 signals are confirmed (0–4).
+            IMPORTANT: Only recommend execute=true if at least 3 signals are confirmed.
+            If fewer than 3 signals are confirmed, set execute=false with low confidence.
+
+            You MUST return a JSON object with these exact fields:
+            - execute: true or false
+            - direction: 'short' (gap-up fade) or 'long' (gap-down fade) or null if execute=false
+            - confidence: float between 0.0 and 1.0
+            - gap_fade_target: reversion target — previous_close or VWAP, whichever is closer to current price — or null if execute=false
+            - reasoning: analysis including signal count e.g. "3/4 signals confirmed" (minimum 50 characters)
+
+            Only set execute=true if confidence >= {config.confidence_threshold}.
+            Be concise — keep reasoning under 3 sentences, key_factors to 2-4 items.
+        ''',
+        expected_output='JSON object with execute, direction, confidence, gap_fade_target, reasoning',
+        agent=agent,
+    )
+
+
+def create_vwap_reversion_task(agent, ticker: str, market_data) -> Task:
+    vwap_margin_pct = (
+        round((market_data.current_price - market_data.vwap) / market_data.vwap * 100, 2)
+        if market_data.vwap
+        else None
+    )
+    return Task(
+        description=f'''
+            Analyze {ticker} for a VWAP REVERSION opportunity using this market data:
+            - Current price: {market_data.current_price}
+            - VWAP:          {market_data.vwap}
+            - VWAP margin %: {vwap_margin_pct}%
+            - RSI:           {market_data.rsi}
+            - ATR %:         {market_data.atr_pct}%
+            - Volume ratio:  {market_data.volume_ratio}x
+
+            VWAP reversion means trading BACK TOWARD VWAP when price is extended from it.
+            Long reversion: price is below VWAP, expect a bounce up to VWAP.
+            Short reversion: price is above VWAP, expect a pullback down to VWAP.
+
+            Evaluate each of these four signals and count how many are confirmed:
+
+            Signal 1 — VWAP extension (minimum threshold):
+            - Long reversion:  vwap_margin_pct <= -1.5% = CONFIRMED ✓  |  > -1.5% = NOT confirmed ✗
+            - Short reversion: vwap_margin_pct >= +1.5% = CONFIRMED ✓  |  < +1.5% = NOT confirmed ✗
+
+            Signal 2 — RSI reversal signal:
+            - Long reversion:  RSI < 40 (oversold, ready to bounce)    = CONFIRMED ✓  |  RSI >= 40 = NOT confirmed ✗
+            - Short reversion: RSI > 60 (overbought, ready to fade)    = CONFIRMED ✓  |  RSI <= 60 = NOT confirmed ✗
+
+            Signal 3 — 2-bar momentum flattening:
+            - Momentum < 0.1% in the extension direction = CONFIRMED ✓ (move stalling)
+            - Interpret from RSI: if RSI is within 3 points of its recent extreme, treat as flattening
+            - Still accelerating away from VWAP = NOT confirmed ✗
+
+            Signal 4 — Volume declining:
+            - volume_ratio < 1.0 (below average, exhaustion confirmed) = CONFIRMED ✓  |  >= 1.0 = NOT confirmed ✗
+
+            Count how many of the 4 signals are confirmed (0–4).
+            IMPORTANT: Only recommend execute=true if at least 3 signals are confirmed.
+            If fewer than 3 signals are confirmed, set execute=false with low confidence.
+
+            You MUST return a JSON object with these exact fields:
+            - execute: true or false
+            - direction: 'long' (reversion up to VWAP) or 'short' (reversion down to VWAP) or null if execute=false
+            - confidence: float between 0.0 and 1.0
+            - vwap_target: current VWAP value as the price target, or null if execute=false
+            - reasoning: analysis including signal count e.g. "3/4 signals confirmed" (minimum 50 characters)
+
+            Only set execute=true if confidence >= {config.confidence_threshold}.
+            Be concise — keep reasoning under 3 sentences, key_factors to 2-4 items.
+        ''',
+        expected_output='JSON object with execute, direction, confidence, vwap_target, reasoning',
+        agent=agent,
+    )

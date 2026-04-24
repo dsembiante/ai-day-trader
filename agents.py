@@ -176,3 +176,45 @@ def create_portfolio_manager() -> Agent:
         llm=llm,
         verbose=False,
     )
+
+
+def create_gap_fade_analyst() -> Agent:
+    """Gap fade specialist evaluating overextended gap-up and gap-down setups."""
+    return Agent(
+        role='Gap Fade Analyst',
+        goal=(
+            'Identify overextended gap-up or gap-down stocks that are likely to '
+            'partially revert toward previous close during the 9:45–10:30 AM ET window.'
+        ),
+        backstory=(
+            'You are a specialist in gap fade trading. You analyze stocks that have '
+            'gapped significantly at open and evaluate whether the gap is overdone and '
+            'likely to partially fill. You look for overbought/oversold conditions, '
+            'VWAP extension, and declining volume to confirm fade setups. '
+            'You require at least 3 of 4 signals before recommending a fade entry, '
+            'and you always report your signal count in your reasoning.'
+        ),
+        llm=llm,
+        verbose=False,
+    )
+
+
+def create_vwap_reversion_analyst() -> Agent:
+    """VWAP reversion specialist identifying afternoon mean-reversion setups."""
+    return Agent(
+        role='VWAP Reversion Analyst',
+        goal=(
+            'Identify stocks extended from VWAP that are likely to revert back toward '
+            'it during the 12:00–2:30 PM ET afternoon session.'
+        ),
+        backstory=(
+            'You are a specialist in mean reversion trading around VWAP. You analyze '
+            'afternoon price action looking for stocks that have moved too far from their '
+            'volume-weighted average price and show signs of exhaustion. You use RSI, '
+            'volume, and momentum signals to time reversion entries. '
+            'You require at least 3 of 4 signals before recommending a reversion entry, '
+            'and you always report your signal count in your reasoning.'
+        ),
+        llm=llm,
+        verbose=False,
+    )
