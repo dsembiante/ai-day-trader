@@ -818,21 +818,43 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
 
                 # ── 2-Bar Momentum Confirmation Gate ─────────────────────────
                 # Require recent price movement to align with trade direction.
+                # High-confidence entries (>= 0.85) may override minor opposing
+                # momentum (<= 0.25%) but are still blocked on strong opposition.
                 # Skips on data failure (None) so a bad fetch never blocks a trade.
                 _momentum = _get_2bar_momentum(ticker)
                 if _momentum is not None:
                     if trade_str == 'buy' and _momentum < 0:
-                        print(
-                            f'⏭️ {ticker} — LONG skipped: price pulling back on last 2 bars '
-                            f'({_momentum:+.2f}%), waiting for momentum to confirm up'
-                        )
-                        continue
+                        if decision.confidence >= 0.85 and _momentum >= -0.25:
+                            print(
+                                f'⚠️ {ticker} — minor opposing momentum ({_momentum:+.2f}%) '
+                                f'overridden by high confidence ({decision.confidence:.2f}), proceeding'
+                            )
+                        else:
+                            print(
+                                f'⏭️ {ticker} — LONG skipped: strong opposing momentum '
+                                f'({_momentum:+.2f}%), confidence {decision.confidence:.2f} '
+                                f'insufficient to override'
+                            ) if decision.confidence >= 0.85 else print(
+                                f'⏭️ {ticker} — LONG skipped: price pulling back on last 2 bars '
+                                f'({_momentum:+.2f}%), waiting for momentum to confirm up'
+                            )
+                            continue
                     elif trade_str in ('short', 'sell_short') and _momentum > 0:
-                        print(
-                            f'⏭️ {ticker} — SHORT skipped: price bouncing up on last 2 bars '
-                            f'({_momentum:+.2f}%), waiting for momentum to resume down'
-                        )
-                        continue
+                        if decision.confidence >= 0.85 and _momentum <= 0.25:
+                            print(
+                                f'⚠️ {ticker} — minor opposing momentum ({_momentum:+.2f}%) '
+                                f'overridden by high confidence ({decision.confidence:.2f}), proceeding'
+                            )
+                        else:
+                            print(
+                                f'⏭️ {ticker} — SHORT skipped: strong opposing momentum '
+                                f'({_momentum:+.2f}%), confidence {decision.confidence:.2f} '
+                                f'insufficient to override'
+                            ) if decision.confidence >= 0.85 else print(
+                                f'⏭️ {ticker} — SHORT skipped: price bouncing up on last 2 bars '
+                                f'({_momentum:+.2f}%), waiting for momentum to resume down'
+                            )
+                            continue
 
                 # ── SPY Momentum Confirmation Gate ────────────────────────────
                 # Require SPY 2-bar momentum to align with trade direction.
