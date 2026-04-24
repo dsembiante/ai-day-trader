@@ -454,7 +454,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                     minutes_since_exit = (datetime.now() - exit_dt).total_seconds() / 60
                     if minutes_since_exit < config.loss_cooloff_minutes:
                         print(
-                            f'⏸️ {ticker} — 30min cooloff after loss exit '
+                            f'⏸️ {ticker} — 15min cooloff after loss exit '
                             f'({minutes_since_exit:.0f}min ago) — skipping'
                         )
                         continue
@@ -682,6 +682,25 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                     print(
                         f'⏭️ {ticker} — exposure cap reached '
                         f'({_exposure_pct:.1f}% of portfolio deployed, 80% max)'
+                    )
+                    continue
+
+                # ── Re-entry Cooldown Gate ────────────────────────────────────
+                # Block re-entering the same ticker in the same direction within
+                # 10 minutes of the previous exit. Prevents immediately walking
+                # back into the same conditions that just closed the position.
+                _recent_exit = db.get_recent_closed_trade_by_direction(
+                    ticker, trade_str, minutes=10
+                )
+                if _recent_exit:
+                    try:
+                        _exit_dt  = datetime.fromisoformat(_recent_exit['exit_time'])
+                        _mins_ago = (datetime.now() - _exit_dt).total_seconds() / 60
+                    except Exception:
+                        _mins_ago = 0.0
+                    print(
+                        f'⏭️ {ticker} — re-entry cooldown active '
+                        f'(exited {_mins_ago:.0f}min ago), skipping'
                     )
                     continue
 

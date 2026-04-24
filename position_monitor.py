@@ -287,10 +287,15 @@ class PositionMonitor:
                 self._price_history[trade_id] = (history + [current_price])[-2:]
 
             # Time-based loss exit — cut losing positions early before the bracket fires.
-            # Triggers only after 20 min held AND position is down 0.35%+.
-            # gain_pct is already directionally correct for both longs and shorts
-            # (Alpaca unrealized_pl is negative when losing regardless of side).
-            if exit_reason is None and gain_pct is not None and minutes_held >= 20 and gain_pct <= -0.0035:
+            # Triggers only after 20 min held. Threshold mirrors ATR stop tiers so
+            # the dynamic exit fires at the same level as the bracket stop.
+            if atr_pct and atr_pct >= 3.5:
+                _loss_threshold = -0.0150   # 1.5% — high-vol names
+            elif atr_pct and atr_pct >= 2.0:
+                _loss_threshold = -0.0100   # 1.0% — med-vol names
+            else:
+                _loss_threshold = -0.0075   # 0.75% — low-vol / ATR unavailable
+            if exit_reason is None and gain_pct is not None and minutes_held >= 20 and gain_pct <= _loss_threshold:
                 exit_reason = 'time_loss_exit'
                 print(
                     f'⏱️ {ticker} held {minutes_held:.0f}min at {gain_pct*100:.2f}% '

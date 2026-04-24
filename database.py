@@ -260,6 +260,35 @@ class Database:
             row = cur.fetchone()
             return dict(row) if row else None
 
+    def get_recent_closed_trade_by_direction(
+        self, ticker: str, trade_type: str, minutes: int = 10
+    ) -> dict | None:
+        """
+        Return the most recent closed trade for ticker in the same direction
+        within the last `minutes` minutes, or None if none exists.
+
+        Used by crew.py to enforce the per-direction re-entry cooldown gate.
+        trade_type comparison includes both canonical forms ('buy'/'long',
+        'short'/'sell_short') so direction matching is robust to LLM variation.
+        """
+        is_long = trade_type in ('buy', 'long')
+        direction_types = ('buy', 'long') if is_long else ('short', 'sell_short')
+        with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT trade_type, exit_time FROM trades
+                WHERE ticker = %s
+                  AND status = 'closed'
+                  AND trade_type = ANY(%s)
+                  AND exit_time >= NOW() - INTERVAL '%s minutes'
+                ORDER BY exit_time DESC
+                LIMIT 1
+                """,
+                (ticker, list(direction_types), minutes),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
     def get_performance_by_hold_period(self) -> dict:
         """
         Aggregate closed trade statistics broken out by hold period tier.
