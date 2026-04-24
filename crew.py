@@ -534,7 +534,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     # as at least one strategy has an open window; the momentum pipeline gets a
     # continue gate inside the loop when its own window has closed.
     momentum_entries_open = et_now.time() < time(11, 30)
-    gap_fade_entries_open = et_now.time() < time(10, 30)
+    gap_fade_entries_open = et_now.time() < time(10, 45)
     vwap_reversion_open   = (
         config.vwap_reversion_enabled and
         time(12, 0) <= et_now.time() <= time(14, 30)

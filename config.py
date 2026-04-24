@@ -130,7 +130,7 @@ class Config(BaseModel):
     gap_fade_enabled: bool = True            # Gap fade strategy (9:45–10:30 AM ET)
     vwap_reversion_enabled: bool = False     # VWAP reversion strategy (12:00–2:30 PM ET)
     gap_fade_min_gap_pct: float = 5.0        # Minimum gap % to qualify for gap fade
-    gap_fade_window_end: str = "10:30"       # ET time to stop gap fade entries
+    gap_fade_window_end: str = "10:45"       # ET time to stop gap fade entries
     vwap_reversion_window_start: str = "12:00"  # ET time to start VWAP reversion
     vwap_reversion_window_end: str = "14:30"    # ET time to stop VWAP reversion
 
