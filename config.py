@@ -127,7 +127,7 @@ class Config(BaseModel):
     position_max_days: int = 20
 
     # ── Multi-Strategy Configuration ─────────────────────────────────────────
-    gap_fade_enabled: bool = False           # Gap fade strategy (9:45–10:30 AM ET)
+    gap_fade_enabled: bool = True            # Gap fade strategy (9:45–10:30 AM ET)
     vwap_reversion_enabled: bool = False     # VWAP reversion strategy (12:00–2:30 PM ET)
     gap_fade_min_gap_pct: float = 5.0        # Minimum gap % to qualify for gap fade
     gap_fade_window_end: str = "10:30"       # ET time to stop gap fade entries
