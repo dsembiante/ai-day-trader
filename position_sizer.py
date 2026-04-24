@@ -89,10 +89,6 @@ class PositionSizer:
             'pct_of_portfolio': round(position_usd / portfolio_value * 100, 2),
         }
 
-    # ── ATR-based take-profit caps (intraday only) ───────────────────────────
-    _ATR_TARGET_MIN = 0.01   # 1.0% — floor on take-profit
-    _ATR_TARGET_MAX = 0.10   # 10.0% — ceiling on take-profit
-
     def get_stop_loss(self, entry: float, trade_type: str, hold: HoldPeriod,
                       atr_pct: float = None, ticker: str = '') -> float:
         """
@@ -162,10 +158,15 @@ class PositionSizer:
         """
         Calculate the take-profit price for a position.
 
-        For INTRADAY trades with a valid atr_pct, uses 3.0 × ATR% as the target
-        distance (capped between 1% and 10%), preserving the 2:1 reward-to-risk
-        ratio relative to the 1.5× ATR stop. Falls back to config fixed percentages
-        for non-intraday holds or when ATR is unavailable.
+        For INTRADAY trades with a valid atr_pct, uses ATR-tiered fixed targets
+        that maintain a 2:1 reward-to-risk ratio relative to the stop loss tiers:
+
+            ATR < 2.0% → 1.5% target  (2:1 on 0.75% stop)
+            ATR < 3.5% → 2.0% target  (2:1 on 1.00% stop)
+            ATR ≥ 3.5% → 3.0% target  (2:1 on 1.50% stop)
+
+        Falls back to config fixed percentages for non-intraday holds or when
+        ATR is unavailable (medium-tier default: 2.0%).
 
         Args:
             entry:      Fill price at trade entry.
@@ -178,12 +179,16 @@ class PositionSizer:
             Take-profit price rounded to 2 decimal places.
         """
         if hold == HoldPeriod.INTRADAY and atr_pct is not None and atr_pct > 0:
-            raw_target = (atr_pct / 100) * 3.0
-            pct = max(self._ATR_TARGET_MIN, min(self._ATR_TARGET_MAX, raw_target))
+            if atr_pct < 2.0:
+                pct = 0.0150   # 1.5% — low-vol names  (2:1 on 0.75% stop)
+            elif atr_pct < 3.5:
+                pct = 0.0200   # 2.0% — med-vol names  (2:1 on 1.00% stop)
+            else:
+                pct = 0.0300   # 3.0% — high-vol names (2:1 on 1.50% stop)
             self._last_atr_target_pct = pct
         else:
             pct = {
-                HoldPeriod.INTRADAY: config.intraday_take_profit_pct,
+                HoldPeriod.INTRADAY: 0.0200,                     # medium-tier default
                 HoldPeriod.SWING:    config.swing_take_profit_pct,
                 HoldPeriod.POSITION: config.position_take_profit_pct,
             }.get(hold, config.swing_take_profit_pct)
