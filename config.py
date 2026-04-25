@@ -138,9 +138,9 @@ class Config(BaseModel):
     # Symbols scanned on every agent cycle. Mix of mega-cap tech, financials,
     # and broad market ETFs for diversified signal generation.
     watchlist: list = [
-        'NVDA', 'AMD', 'AAPL', 'META', 'AMZN',
-        'MSFT', 'GOOGL', 'JPM', 'NFLX', 'AVGO',
-        'UBER', 'COST', 'CRM', 'QCOM', 'PYPL',
+        'AAPL', 'AMD', 'AMZN', 'AVGO', 'GOOGL',
+        'META', 'MSFT', 'MU', 'NFLX', 'NVDA',
+        'PLTR', 'QCOM', 'SMCI', 'TSLA', 'UBER',
     ]
 
     # ── File Paths ────────────────────────────────────────────────────────────

@@ -57,7 +57,7 @@ def get_profit_threshold(atr_pct, minutes_held: float) -> float:
     if minutes_held < 10:
         # Fresh position — let it run to the full ATR-calibrated target
         if not atr_pct or atr_pct < 2.0:
-            return 1.5   # Low volatility: AAPL, MSFT, JPM
+            return 1.5   # Low volatility: AAPL, MSFT, QCOM
         elif atr_pct < 3.5:
             return 2.0   # Medium volatility: META, AMZN, NVDA
         else:

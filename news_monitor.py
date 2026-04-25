@@ -53,6 +53,7 @@ class NewsMonitor:
         'UPS', 'RTX', 'HON', 'AMGN', 'SBUX', 'GS', 'MS', 'BLK',
         'CAT', 'DE', 'GE', 'F', 'GM', 'UBER', 'NFLX', 'SPOT',
         'COIN', 'AMD', 'INTC', 'MU', 'AMAT', 'CRM', 'NOW', 'SNOW',
+        'SMCI', 'PLTR',
     ]
 
     # ── Rate Limiting ─────────────────────────────────────────────────────────
