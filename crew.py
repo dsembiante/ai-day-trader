@@ -982,6 +982,8 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
 
             # ── Position Sizing & Execution ───────────────────────────────────
             if decision.execute and decision.trade_type:
+                trade_str = decision.trade_type.value if hasattr(decision.trade_type, 'value') else str(decision.trade_type)
+
                 # ── Earnings Day Gate ─────────────────────────────────────────
                 # Block all entries on earnings day regardless of signal strength.
                 # next_earnings_date is fetched from yfinance calendar at data
@@ -1036,8 +1038,6 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 sizing = sizer.calculate(
                     portfolio_value, market_data.current_price, decision.confidence, hold
                 )
-                trade_str = decision.trade_type.value if hasattr(decision.trade_type, 'value') else str(decision.trade_type)
-
                 # ── High Conviction Override ──────────────────────────────────
                 # Confidence >= 0.85 with a favorable regime (long in bull, short in
                 # bear) recalculates using a 20% ceiling instead of the standard 15%.
