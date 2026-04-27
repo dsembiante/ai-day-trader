@@ -390,7 +390,10 @@ class DataCollector:
             if avg_volume == 0:
                 return None, None
             volume_ratio = today_volume / avg_volume
-            return float(volume_ratio), volume_ratio > 1.20
+            _vol_threshold = 1.20
+            _vol_verdict = 'CONFIRMED' if volume_ratio > _vol_threshold else 'REJECTED'
+            print(f'[volume_confirmation] {ticker} — current vol {volume_ratio:.2f}x avg, threshold {_vol_threshold:.2f}x → {_vol_verdict}')
+            return float(volume_ratio), volume_ratio > _vol_threshold
         except Exception as e:
             log_error('volume_confirmation', ticker, str(e))
             return None, None

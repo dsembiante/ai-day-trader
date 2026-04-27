@@ -124,6 +124,30 @@ class Database:
         except Exception:
             self.conn.rollback()  # Isolated — schema tables already committed above
 
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'trades' AND column_name = 'max_favorable_excursion_pct'
+                """)
+                if not cur.fetchone():
+                    cur.execute("ALTER TABLE trades ADD COLUMN max_favorable_excursion_pct REAL")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'trades' AND column_name = 'max_adverse_excursion_pct'
+                """)
+                if not cur.fetchone():
+                    cur.execute("ALTER TABLE trades ADD COLUMN max_adverse_excursion_pct REAL")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+
     # ── Write Operations ──────────────────────────────────────────────────────
 
     def insert_trade(self, trade: dict):
@@ -236,6 +260,19 @@ class Database:
             cur.execute(
                 'UPDATE trades SET entry_price=%s WHERE trade_id=%s',
                 (entry_price, trade_id),
+            )
+        self.conn.commit()
+
+    def update_mfe_mae(self, trade_id: str, mfe_pct: 'float | None', mae_pct: 'float | None'):
+        """
+        Persist the current max favorable and max adverse excursion percentages
+        for an open trade. Called by position_monitor on every check cycle.
+        Values are fractions (0.015 = 1.5%) matching gain_pct conventions.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                'UPDATE trades SET max_favorable_excursion_pct=%s, max_adverse_excursion_pct=%s WHERE trade_id=%s',
+                (mfe_pct, mae_pct, trade_id),
             )
         self.conn.commit()
 

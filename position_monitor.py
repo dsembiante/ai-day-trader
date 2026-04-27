@@ -87,6 +87,9 @@ class PositionMonitor:
         # In-memory peak gain tracking for trailing profit protection.
         # Keyed by trade_id; value is the highest gain_pct seen since entry (as a fraction).
         self._peak_gain_pct: dict = {}
+        # In-memory peak adverse excursion (MAE) tracking.
+        # Keyed by trade_id; value is the most negative gain_pct seen since entry.
+        self._peak_loss_pct: dict = {}
 
     # ── Public Interface ──────────────────────────────────────────────────────
 
@@ -237,11 +240,13 @@ class PositionMonitor:
             if entry_price and entry_price > 0 and shares > 0:
                 gain_pct = unrealized_pl / (entry_price * shares)
 
-            # Update peak gain — track the highest gain% seen for this trade
+            # Update peak gain (MFE) and peak loss (MAE) — track extremes for this trade
             trade_id = trade['trade_id']
             if gain_pct is not None:
                 if gain_pct > self._peak_gain_pct.get(trade_id, float('-inf')):
                     self._peak_gain_pct[trade_id] = gain_pct
+                if gain_pct < self._peak_loss_pct.get(trade_id, float('inf')):
+                    self._peak_loss_pct[trade_id] = gain_pct
 
             # Time-and-ATR-tiered profit threshold — combines ATR volatility regime
             # with how long the position has been open. Fresh positions must hit
@@ -376,6 +381,16 @@ class PositionMonitor:
                         exit_reason = 'loss_vwap_reversal'
                         print(f'🛑 {ticker} loss-based exit: {loss_pct*100:.1f}% loss + VWAP reversal — cutting position')
 
+            # Persist MFE/MAE to DB on every cycle so position_detail logging can read them
+            try:
+                self.db.update_mfe_mae(
+                    trade['trade_id'],
+                    self._peak_gain_pct.get(trade_id),
+                    self._peak_loss_pct.get(trade_id),
+                )
+            except Exception:
+                pass
+
             if exit_reason:
                 try:
                     self.executor.close_position(ticker, trade_type)
@@ -394,6 +409,7 @@ class PositionMonitor:
         active_ids = {t['trade_id'] for t in open_trades}
         self._price_history  = {k: v for k, v in self._price_history.items()  if k in active_ids}
         self._peak_gain_pct  = {k: v for k, v in self._peak_gain_pct.items()  if k in active_ids}
+        self._peak_loss_pct  = {k: v for k, v in self._peak_loss_pct.items()  if k in active_ids}
 
     def check_market_reversal(self) -> 'str | None':
         """

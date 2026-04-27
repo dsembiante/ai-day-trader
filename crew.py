@@ -551,7 +551,17 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     open_positions = executor.get_open_positions()
     alpaca_held_tickers = {p['ticker'] for p in open_positions}
     db_open_tickers     = {t['ticker'] for t in db.get_open_trades()}
-    trades_executed = 0
+
+    # Item 2: Header for per-position detail block
+    _held_for_log = alpaca_held_tickers | db_open_tickers
+    if _held_for_log:
+        print(f'[position_monitor] Checking {len(_held_for_log)} positions:')
+
+    trades_executed           = 0
+    _cycle_analyzed           = 0   # Item 4: tickers that completed crew analysis
+    _cycle_errors             = 0   # Item 4: tickers that threw an exception
+    _cycle_high_vol_gated     = 0   # Item 4: tickers with ATR >= 4%
+    _cycle_strategies_skipped = 0   # Item 4: sum of per-strategy skips from Item 3
 
     # ── Market Regime Detection ───────────────────────────────────────────────
     # Detected once per cycle using SPY golden/death cross — shared across all
@@ -628,6 +638,26 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
 
     # Build a lookup of open DB trades by ticker for exit evaluation
     db_open_trades_by_ticker = {t['ticker']: t for t in db.get_open_trades()}
+
+    def _parse_task_output(task_obj):
+        """Item 6: Safely parse a CrewAI task's output to a dict. Returns None on any failure."""
+        try:
+            out = getattr(task_obj, 'output', None)
+            if out is None:
+                return None
+            if hasattr(out, 'json_dict') and out.json_dict:
+                return out.json_dict
+            raw = getattr(out, 'raw', None)
+            if raw:
+                raw = raw.strip()
+                if raw.startswith('```'):
+                    raw = raw.split('\n', 1)[-1]
+                if raw.endswith('```'):
+                    raw = raw.rsplit('```', 1)[0]
+                return json.loads(raw.strip())
+        except Exception:
+            pass
+        return None
 
     # ── Per-Ticker Loop ───────────────────────────────────────────────────────
     for ticker in config.watchlist:
@@ -725,6 +755,37 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                     exit_confidence = float(exit_data.get('confidence', 0.0))
                     exit_reasoning = exit_data.get('reasoning', '')
 
+                    # Item 2: Per-position detail log
+                    try:
+                        _pos_entry  = entry_price or market_data.current_price
+                        _pos_shares = (db_trade.get('shares') or 0) if db_trade else 0
+                        _pos_cur    = market_data.current_price
+                        _pos_side   = 'long' if is_long else 'short'
+                        if _pos_shares > 0 and _pos_entry:
+                            _pos_pnl_usd = (
+                                (_pos_cur - _pos_entry) * _pos_shares if is_long
+                                else (_pos_entry - _pos_cur) * _pos_shares
+                            )
+                            _pos_pnl_pct = _pos_pnl_usd / (_pos_entry * _pos_shares) * 100
+                            _pos_pnl_str = f'${_pos_pnl_usd:+.2f} ({_pos_pnl_pct:+.2f}%)'
+                        else:
+                            _pos_pnl_str = 'N/A'
+                        _pos_mfe_raw = db_trade.get('max_favorable_excursion_pct') if db_trade else None
+                        _pos_mfe_str = f'{_pos_mfe_raw * 100:+.2f}%' if _pos_mfe_raw is not None else 'N/A'
+                        _pos_entry_dt = None
+                        if db_trade and db_trade.get('entry_time'):
+                            try:
+                                _pos_entry_dt = datetime.fromisoformat(db_trade['entry_time'])
+                            except Exception:
+                                pass
+                        _pos_mins    = int((datetime.now() - _pos_entry_dt).total_seconds() / 60) if _pos_entry_dt else 0
+                        _exit_dec    = 'EXIT' if (should_exit and exit_confidence >= 0.75) else 'HOLD'
+                        _exit_rsn    = exit_reasoning.replace('\n', ' ')[:60].strip()
+                        print(f'  {ticker} {_pos_side} @ ${_pos_entry:.2f} | now ${_pos_cur:.2f} | P&L {_pos_pnl_str} | MFE {_pos_mfe_str} | {_pos_mins}min')
+                        print(f'    Exit eval: confidence={exit_confidence:.2f} | decision={_exit_dec} | reason={_exit_rsn}')
+                    except Exception:
+                        pass  # Position detail is non-critical observability
+
                     if should_exit and exit_confidence >= 0.75:
                         print(f'✅ Agent recommends EXIT {ticker} — {exit_reasoning}')
                         executor.close_position(ticker, trade_type)
@@ -811,6 +872,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
             _is_high_vol = _ticker_atr >= 4.0
             if _is_high_vol:
                 config.confidence_threshold = max(config.confidence_threshold, 0.85)
+                _cycle_high_vol_gated += 1
                 print(
                     f'⚠️ {ticker} ATR {_ticker_atr:.2f}% — high volatility, '
                     f'requiring 3/4 signals and 0.85 confidence'
@@ -829,6 +891,29 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                     ticker, market_data, db, executor, config,
                     et_now, market_regime, vix_regime,
                 )
+
+            # ── Strategy Eligibility Log (Item 3) ────────────────────────────
+            _gf_status = (
+                'disabled'             if not config.gap_fade_enabled
+                else 'skipped(window_closed)' if not gap_fade_entries_open
+                else 'traded'          if gap_fade_traded
+                else 'evaluated(no_signal)'
+            )
+            _vwap_status = (
+                'disabled'             if not config.vwap_reversion_enabled
+                else 'skipped(window_closed)' if not vwap_reversion_open
+                else 'evaluated'
+            )
+            _momentum_status = (
+                'skipped(window_closed)'   if not momentum_entries_open
+                else 'skipped(gap_fade_traded)' if gap_fade_traded
+                else 'eligible'
+            )
+            print(f'[strategies] {ticker} — gap_fade={_gf_status} | momentum={_momentum_status} | vwap={_vwap_status}')
+            _cycle_strategies_skipped += sum(
+                1 for _s in (_gf_status, _momentum_status, _vwap_status)
+                if _s.startswith('skipped')
+            )
 
             # Momentum — skip if gap fade already traded this ticker
             # or if outside the momentum entry window
@@ -961,6 +1046,36 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
 
             decision = TradeDecision(**raw_dict)
 
+            # ── Item 6: Per-agent verdict chain ───────────────────────────────
+            try:
+                _bd = _parse_task_output(bull_task)
+                if _bd:
+                    _kf  = _bd.get('key_factors', [])
+                    _kfl = _kf if isinstance(_kf, list) else [str(_kf)]
+                    _sig = next((str(k) for k in _kfl if '/4' in str(k)), '?/4 signals')
+                    _rsn = str(_bd.get('reasoning', ''))[:80].replace('\n', ' ')
+                    print(f'🐂 {ticker} Bull: {_sig} | confidence={float(_bd.get("confidence", 0)):.2f} | reason={_rsn}')
+
+                _brd = _parse_task_output(bear_task)
+                if _brd:
+                    _kf  = _brd.get('key_factors', [])
+                    _kfl = _kf if isinstance(_kf, list) else [str(_kf)]
+                    _sig = next((str(k) for k in _kfl if '/4' in str(k)), '?/4 signals')
+                    _rsn = str(_brd.get('reasoning', ''))[:80].replace('\n', ' ')
+                    print(f'🐻 {ticker} Bear: {_sig} | confidence={float(_brd.get("confidence", 0)):.2f} | reason={_rsn}')
+
+                _rd = _parse_task_output(risk_task)
+                if _rd:
+                    _rm_verdict = 'APPROVE' if _rd.get('execute') else 'REJECT'
+                    _rsn = str(_rd.get('risk_manager_reasoning', ''))[:80].replace('\n', ' ')
+                    print(f'🛡️ {ticker} Risk: {_rm_verdict} | confidence={float(_rd.get("confidence", 0)):.2f} | reason={_rsn}')
+
+                _pm_verdict = 'execute=True' if raw_dict.get('execute') else 'execute=False'
+                _pm_rsn = str(raw_dict.get('risk_manager_reasoning', ''))[:80].replace('\n', ' ')
+                print(f'📋 {ticker} PM: {_pm_verdict} | confidence={float(raw_dict.get("confidence", 0)):.2f} | reason={_pm_rsn}')
+            except Exception:
+                pass  # Agent chain logging is non-critical — never crash the cycle
+
             # ── Compact Decision Summary ──────────────────────────────────────
             # Replaces the verbose ╭──────╮ agent output (suppressed via verbose=False).
             # Shows the key fields needed for trade review without dumping full prompts.
@@ -971,6 +1086,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 f'type={decision.trade_type or "none"} | '
                 f'{_reasoning}'
             )
+            _cycle_analyzed += 1  # Item 4: this ticker completed crew analysis
 
             # ── Decision Post-Processing ──────────────────────────────────────
             # If the agent omitted entry_price (returns null for market orders),
@@ -1276,6 +1392,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
             # should never abort the entire watchlist cycle
             log_error('crew', ticker, str(e))
             print(f'❌ Error analyzing {ticker}: {e}')
+            _cycle_errors += 1  # Item 4
             continue
 
     # ── Cycle Summary ─────────────────────────────────────────────────────────
@@ -1284,8 +1401,12 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     log_run(run_log)
 
     print(
-        f'\n✅ Cycle complete — {trades_executed} trades executed '
-        f'in {run_log.duration_seconds:.1f}s'
+        f'\n✅ Cycle complete in {run_log.duration_seconds:.1f}s | '
+        f'analyzed: {_cycle_analyzed} | '
+        f'errors: {_cycle_errors} | '
+        f'high_vol_gated: {_cycle_high_vol_gated} | '
+        f'strategies_skipped: {_cycle_strategies_skipped} | '
+        f'trades: {trades_executed}'
     )
 
 
