@@ -87,6 +87,8 @@ class MarketData(BaseModel):
     gap_pct: Optional[float] = None             # (last_price - prev_close) / prev_close * 100
     gap_is_bullish: Optional[bool] = None       # True if gap_pct > 0.5%
     gap_is_bearish: Optional[bool] = None       # True if gap_pct < -0.5%
+    previous_close: Optional[float] = None      # Prior session's closing price
+    pre_market_price: Optional[float] = None    # Today's opening bar price (proxy for pre-market)
 
     # Volume confirmation vs 20-day average
     volume_ratio: Optional[float] = None        # today_volume / avg_20day_volume

@@ -249,7 +249,7 @@ class DataCollector:
         current_volume = volume or 0
         vwap, price_above_vwap                               = self.get_vwap(ticker)
         opening_range_high, opening_range_low, _, orb_breakout_up, orb_breakout_down = self.get_opening_range(ticker)
-        gap_pct, gap_is_bullish, gap_is_bearish              = self.get_premarket_gap(ticker)
+        gap_pct, gap_is_bullish, gap_is_bearish, previous_close, pre_market_price = self.get_premarket_gap(ticker)
         volume_ratio, volume_confirmed                       = self.get_volume_confirmation(ticker)
         atr_pct                                              = self.get_atr(ticker, current_price)
 
@@ -281,6 +281,8 @@ class DataCollector:
             gap_pct=gap_pct,
             gap_is_bullish=gap_is_bullish,
             gap_is_bearish=gap_is_bearish,
+            previous_close=previous_close,
+            pre_market_price=pre_market_price,
             volume_ratio=volume_ratio,
             volume_confirmed=volume_confirmed,
             vix=vix,
@@ -345,7 +347,8 @@ class DataCollector:
         """
         Calculate pre-market gap using Alpaca daily bars.
         Uses yesterday's close as prev_close and today's open as last_price.
-        Returns (gap_pct, gap_is_bullish, gap_is_bearish) or (None, None, None).
+        Returns (gap_pct, gap_is_bullish, gap_is_bearish, prev_close, today_open)
+        or (None, None, None, None, None) on failure.
         """
         try:
             bars = self.alpaca.get_stock_bars(StockBarsRequest(
@@ -355,16 +358,16 @@ class DataCollector:
             ))
             df = bars.df.reset_index()
             if df.empty or len(df) < 2:
-                return None, None, None
+                return None, None, None, None, None
             prev_close = float(df['close'].iloc[-2])
             today_open = float(df['open'].iloc[-1])
             if prev_close == 0:
-                return None, None, None
+                return None, None, None, None, None
             gap_pct = float((today_open - prev_close) / prev_close * 100)
-            return gap_pct, gap_pct > 0.5, gap_pct < -0.5
+            return gap_pct, gap_pct > 0.5, gap_pct < -0.5, prev_close, today_open
         except Exception as e:
             log_error('premarket_gap', ticker, str(e))
-            return None, None, None
+            return None, None, None, None, None
 
     def get_volume_confirmation(self, ticker: str) -> tuple:
         """

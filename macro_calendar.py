@@ -23,6 +23,7 @@ Usage:
 
 import json
 import os
+import time
 import requests
 from datetime import date, datetime, timedelta
 from typing import Optional
@@ -98,7 +99,7 @@ def check_high_impact_day(today: Optional[date] = None) -> tuple:
                 if today_str in release_dates:
                     return _cache_and_return(cache_path, True, event_name)
         except Exception as e:
-            log_error('macro_calendar', 'FRED', str(e))
+            print(f'[macro_calendar] FRED unavailable after retries: {e} — treating as normal day')
             # FRED unreachable — safe default: treat as normal day
 
     return _cache_and_return(cache_path, False, '')
@@ -112,21 +113,38 @@ def _fetch_fred_release_dates(release_id: int, today: date) -> set:
 
     Narrow window keeps the response small. FRED returns the exact calendar
     dates on which each data series is scheduled to be released publicly.
+
+    Retries up to 2 times with exponential backoff on 5xx errors. Client
+    errors (4xx) are raised immediately — they indicate bad config, not
+    transient failures.
     """
-    r = requests.get(
-        'https://api.stlouisfed.org/fred/release/dates',
-        params={
-            'release_id':   release_id,
-            'api_key':      config.fred_api_key,
-            'file_type':    'json',
-            'realtime_start': (today - timedelta(days=1)).strftime('%Y-%m-%d'),
-            'realtime_end':   (today + timedelta(days=1)).strftime('%Y-%m-%d'),
-            'include_release_dates_with_no_data': 'true',
-        },
-        timeout=10,
-    )
-    r.raise_for_status()
-    return {d['date'] for d in r.json().get('release_dates', [])}
+    params = {
+        'release_id':   release_id,
+        'api_key':      config.fred_api_key,
+        'file_type':    'json',
+        'realtime_start': (today - timedelta(days=1)).strftime('%Y-%m-%d'),
+        'realtime_end':   (today + timedelta(days=1)).strftime('%Y-%m-%d'),
+        'include_release_dates_with_no_data': 'true',
+    }
+    last_exc: Exception = RuntimeError('no attempts made')
+    for attempt in range(3):
+        try:
+            r = requests.get(
+                'https://api.stlouisfed.org/fred/release/dates',
+                params=params,
+                timeout=10,
+            )
+            r.raise_for_status()
+            return {d['date'] for d in r.json().get('release_dates', [])}
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code < 500:
+                raise  # 4xx — bad key or bad params, retrying won't help
+            last_exc = exc
+        except requests.RequestException as exc:
+            last_exc = exc
+        if attempt < 2:
+            time.sleep(2 ** attempt)  # 1 s, then 2 s
+    raise last_exc
 
 
 def _cache_and_return(path: str, is_high_impact: bool, event_name: str) -> tuple:

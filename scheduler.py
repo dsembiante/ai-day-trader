@@ -25,6 +25,30 @@ Deploy on Railway:
     Set the start command to: python scheduler.py
 """
 
+import os, json
+from pathlib import Path
+
+# ── CrewAI tracing suppression ────────────────────────────────────────────────
+# Must run before any crewai import. On Railway the appdirs user-data directory
+# is ephemeral, so CrewAI's first-execution consent file is never found and the
+# "Tracing Preference Saved" banner fires on every crew kickoff. Pre-writing the
+# file with trace_consent=False makes has_user_declined_tracing() return True,
+# which prevents is_first_time from being set True in TraceCollectionListener.
+os.environ.setdefault('CREWAI_DISABLE_TELEMETRY', 'true')
+try:
+    import appdirs as _appdirs
+    _crewai_storage = os.environ.get('CREWAI_STORAGE_DIR', Path.cwd().name)
+    _crewai_user_file = (
+        Path(_appdirs.user_data_dir(_crewai_storage, 'CrewAI')) / '.crewai_user.json'
+    )
+    if not _crewai_user_file.exists():
+        _crewai_user_file.parent.mkdir(parents=True, exist_ok=True)
+        _crewai_user_file.write_text(
+            json.dumps({'first_execution_done': True, 'trace_consent': False})
+        )
+except Exception:
+    pass  # Non-fatal — worst case the banner appears until the file is written
+
 import schedule, time, threading
 from datetime import datetime
 from zoneinfo import ZoneInfo
