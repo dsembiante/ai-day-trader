@@ -163,14 +163,15 @@ class PositionMonitor:
         Evaluate open positions against dynamic intraday exit conditions.
 
         Runs on every cycle immediately after check_all_positions(). Closes a
-        position when any of the following are true:
+        position when any of the following are true (checked in precedence order):
 
-        1. Unrealized gain > 2.5%            — take profit early rather than
-                                               waiting for the fixed bracket
-        2. Open > 2 hours AND gain > 1%      — good enough; free the capital
-        3. Price drops below VWAP (long)     — intraday momentum has reversed
-        4. SPY drops > 1.5% from today's open — broad market reversal; exit
-                                               all longs immediately
+        1. VWAP cross against position              — momentum has reversed
+        2. Fast profit lock: 3+ min AND gain >= 0.30%
+        3. Patient profit lock: 10+ min AND gain >= 0.20%
+        4. Breakeven exit: 30+ min AND any positive gain
+        5. ATR-tiered dynamic take-profit           — for positions < 30 min
+        6. Open > 2 hours AND gain > 1%             — free the capital
+        7. SPY drops > 1.5% from today's open       — broad market reversal
 
         The stop-loss bracket placed at entry is not modified — it remains the
         hard floor. Only the take-profit side is replaced by this dynamic logic.
@@ -321,29 +322,56 @@ class PositionMonitor:
                             f'— pulled back {pullback*100:.2f}% from peak — exiting to protect profits'
                         )
 
-            # Condition 1: gain exceeds time-and-ATR-tiered threshold — dynamic take-profit
+            # Fetch VWAP once per ticker — used by VWAP cross, loss-VWAP, and SPY checks
+            vwap_val = price_above_vwap = None
+            try:
+                vwap_val, price_above_vwap = collector.get_vwap(ticker)
+            except Exception as e:
+                log_error('dynamic_exit_vwap', ticker, str(e))
+
+            # Condition 1: VWAP cross against long position [highest precedence profit-side rule]
+            if exit_reason is None and is_long:
+                if vwap_val is not None and price_above_vwap is False:
+                    exit_reason = 'vwap_cross_exit'
+                    print(f'📉 {ticker} dropped below VWAP ({vwap_val:.2f}) — exiting long')
+
+            # Condition 2: fast profit lock — 3+ min held at 0.30%+ gain
+            if exit_reason is None and gain_pct is not None and minutes_held >= 3 and gain_pct >= 0.003:
+                exit_reason = 'FAST_PROFIT_3MIN_030'
+                print(
+                    f'⚡ {ticker} fast profit lock — held {minutes_held:.0f}min at {gain_pct*100:.2f}% — EXITING'
+                )
+
+            # Condition 3: patient profit lock — 10+ min held at 0.20%+ gain
+            if exit_reason is None and gain_pct is not None and minutes_held >= 10 and gain_pct >= 0.002:
+                exit_reason = 'PATIENT_PROFIT_10MIN_020'
+                print(
+                    f'🔒 {ticker} patient profit lock — held {minutes_held:.0f}min at {gain_pct*100:.2f}% — EXITING'
+                )
+
+            # Condition 4: breakeven exit — 30+ min held with any positive gain
+            if exit_reason is None and gain_pct is not None and minutes_held >= 30 and gain_pct > 0:
+                exit_reason = 'BREAKEVEN_30MIN'
+                print(
+                    f'⏱️ {ticker} 30min+ at {gain_pct*100:.2f}% — locking breakeven profit — EXITING'
+                )
+
+            # Condition 5: ATR-tiered dynamic take-profit (handles < 30 min positions not caught above)
             if exit_reason is None and gain_pct is not None:
                 gain_display = f'{gain_pct * 100:+.2f}%'
-                taking_any_gain = profit_threshold <= 0.01
                 if gain_pct > profit_threshold / 100:
                     exit_reason = 'dynamic_take_profit'
-                    if taking_any_gain:
-                        print(
-                            f'⏱️ {ticker} held {minutes_held:.0f}min [{session_label}] — taking any positive gain '
-                            f'(current: {gain_display}) — EXITING'
-                        )
-                    else:
-                        print(
-                            f'⏱️  {ticker} held {minutes_held:.0f}min [{session_label}] — profit threshold: {profit_threshold:.2f}% '
-                            f'(current gain: {gain_display}) — ABOVE threshold, exiting'
-                        )
+                    print(
+                        f'⏱️  {ticker} held {minutes_held:.0f}min [{session_label}] — profit threshold: {profit_threshold:.2f}% '
+                        f'(current gain: {gain_display}) — ABOVE threshold, exiting'
+                    )
                 else:
                     print(
                         f'⏱️  {ticker} held {minutes_held:.0f}min [{session_label}] — profit threshold: {profit_threshold:.2f}% '
                         f'(current gain: {gain_display}) — BELOW threshold, holding'
                     )
 
-            # Condition 2: open > 2 hours AND gain > 1% — free the capital
+            # Condition 6: open > 2 hours AND gain > 1% — free the capital
             if exit_reason is None and gain_pct is not None and gain_pct > 0.01:
                 entry_time = datetime.fromisoformat(trade['entry_time'])
                 hours_open = (datetime.now() - entry_time).total_seconds() / 3600
@@ -351,25 +379,12 @@ class PositionMonitor:
                     exit_reason = 'dynamic_time_profit'
                     print(f'⏱️ {ticker} 2h+ with {gain_pct*100:.2f}% gain — freeing capital')
 
-            # Fetch VWAP once per ticker — used by conditions 3 and 5
-            vwap_val = price_above_vwap = None
-            try:
-                vwap_val, price_above_vwap = collector.get_vwap(ticker)
-            except Exception as e:
-                log_error('dynamic_exit_vwap', ticker, str(e))
-
-            # Condition 3: VWAP cross against long position
-            if exit_reason is None and is_long:
-                if vwap_val is not None and price_above_vwap is False:
-                    exit_reason = 'vwap_cross_exit'
-                    print(f'📉 {ticker} dropped below VWAP ({vwap_val:.2f}) — exiting long')
-
-            # Condition 4: SPY broad market reversal — exit all longs
+            # Condition 7: SPY broad market reversal — exit all longs
             if exit_reason is None and is_long and spy_reversal:
                 exit_reason = 'spy_reversal_exit'
                 print(f'🚨 {ticker} closed: SPY intraday reversal > 1.5%')
 
-            # Condition 5: loss > 1.5% + VWAP momentum reversal against position
+            # Loss + VWAP momentum reversal against position
             if exit_reason is None and vwap_val is not None:
                 market_value = alpaca_pos.get('market_value')
                 if market_value and abs(market_value) > 0:

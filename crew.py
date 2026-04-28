@@ -1131,7 +1131,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 # 10 minutes of the previous exit. Prevents immediately walking
                 # back into the same conditions that just closed the position.
                 _recent_exit = db.get_recent_closed_trade_by_direction(
-                    ticker, trade_str, minutes=10
+                    ticker, trade_str, minutes=config.profitable_exit_cooldown_minutes
                 )
                 if _recent_exit:
                     try:
