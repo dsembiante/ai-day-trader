@@ -1390,6 +1390,10 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
         except Exception as e:
             # Log the error and continue to the next ticker — one bad ticker
             # should never abort the entire watchlist cycle
+            try:
+                db.conn.rollback()
+            except Exception:
+                pass
             log_error('crew', ticker, str(e))
             print(f'❌ Error analyzing {ticker}: {e}')
             _cycle_errors += 1  # Item 4

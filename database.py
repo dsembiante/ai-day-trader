@@ -317,7 +317,7 @@ class Database:
                 WHERE ticker = %s
                   AND status = 'closed'
                   AND trade_type = ANY(%s)
-                  AND exit_time >= NOW() - INTERVAL '%s minutes'
+                  AND exit_time::timestamptz >= NOW() - INTERVAL '%s minutes'
                 ORDER BY exit_time DESC
                 LIMIT 1
                 """,
