@@ -500,86 +500,117 @@ class PositionMonitor:
         """
         Detect positions closed manually in Alpaca and record them in the DB.
 
-        Unlike reconcile_bracket_exits (which accepts any filled order and
-        classifies by bracket proximity), this method uses direction-matched
-        order lookup: a sell order for longs, a buy order for shorts. This
-        correctly identifies positions that were closed manually outside of
-        our bracket logic without mis-attributing entry orders as exits.
+        Runs BEFORE reconcile_bracket_exits. Uses direction-matched, non-bracket
+        order lookup filtered to orders filled after the position's entry_time.
+        Bracket orders are skipped so reconcile_bracket_exits can classify those
+        correctly as bracket_take_profit / bracket_stop_loss. Only true manual
+        (order_class=SIMPLE) closes are recorded here as 'manual_liquidation'.
 
-        Called at the start of every scheduler cycle before check_all_positions.
+        Also warns about positions Alpaca holds with no matching DB open record
+        (positions entered manually outside the agent — not auto-created in DB).
+
+        Called at the start of every scheduler cycle before reconcile_bracket_exits.
         Silent when all DB records match live Alpaca state.
         """
         open_trades = self.db.get_open_trades()
+        alpaca_positions = self.executor.get_open_positions()
+        live_tickers = {p['ticker'] for p in alpaca_positions}
+
+        # Warn about positions Alpaca holds that have no matching DB open record
+        db_open_tickers = {t['ticker'] for t in open_trades}
+        for pos in alpaca_positions:
+            if pos['ticker'] not in db_open_tickers:
+                print(
+                    f'⚠️  Untracked Alpaca position detected: {pos["ticker"]} '
+                    f'{pos.get("qty", "?")} shares — manual entry suspected, not adding to DB'
+                )
+
         if not open_trades:
             return
 
-        live_positions = {p['ticker'] for p in self.executor.get_open_positions()}
-
         for trade in open_trades:
             ticker = trade['ticker']
-            if ticker in live_positions:
+            if ticker in live_tickers:
                 continue  # Still open in Alpaca — nothing to do
 
             trade_type  = trade.get('trade_type', 'buy')
             entry_price = trade.get('entry_price')
             shares      = trade.get('shares') or 0
 
-            exit_price, _ = self._get_filled_exit_order(ticker, trade_type)
+            # Parse entry_time for after-filter — prevents matching exit orders
+            # from a prior trade on the same ticker traded multiple times today
+            entry_dt = None
+            entry_time_str = trade.get('entry_time')
+            if entry_time_str:
+                try:
+                    entry_dt = datetime.fromisoformat(entry_time_str)
+                except Exception:
+                    pass
+
+            exit_price, order = self._get_filled_exit_order(ticker, trade_type, after=entry_dt)
 
             if exit_price is None:
-                print(
-                    f'⚠️ {ticker} — open DB record found but no Alpaca position '
-                    f'or matching exit order — manual review needed'
-                )
-                continue
+                continue  # No manual exit found — reconcile_bracket_exits handles this
 
-            # Calculate P&L for the log message (update_trade_status recalculates
-            # it internally; this is only for the print below)
+            # Use the broker's actual fill timestamp, not wall-clock now()
+            exit_time_str = None
+            if order and hasattr(order, 'filled_at') and order.filled_at:
+                try:
+                    exit_time_str = order.filled_at.isoformat()
+                except Exception:
+                    pass
+
             pnl = None
             if entry_price and entry_price > 0 and shares > 0:
                 is_long = trade_type in ('buy', 'long')
                 pnl = (exit_price - entry_price) * shares if is_long \
                       else (entry_price - exit_price) * shares
 
-            pnl_str = f'${pnl:.2f}' if pnl is not None else 'unknown'
-            print(
-                f'🔄 {ticker} — manually closed position reconciled: '
-                f'exit @ ${exit_price:.2f}, P&L: {pnl_str}'
-            )
+            pnl_str = f'${pnl:+.2f}' if pnl is not None else 'unknown'
+            print(f'🔧 Reconciled {ticker} — manual liquidation detected, exit @ ${exit_price:.2f}, P&L {pnl_str}')
             try:
                 self.db.update_trade_status(
                     trade['trade_id'],
                     status='closed',
-                    exit_reason='manual_close',
+                    exit_reason='manual_liquidation',
                     exit_price=exit_price,
+                    exit_time_override=exit_time_str,
                 )
             except Exception as e:
                 log_error('reconcile_manual_closes', ticker, str(e))
 
     # ── Private Helpers ───────────────────────────────────────────────────────
 
-    def _get_filled_exit_order(self, ticker: str, trade_type: str) -> 'tuple[float | None, object | None]':
+    def _get_filled_exit_order(self, ticker: str, trade_type: str, after: 'datetime | None' = None) -> 'tuple[float | None, object | None]':
         """
-        Return (fill_price, order) for the most recent direction-matched exit
-        order for ticker, or (None, None) if none found.
+        Return (fill_price, order) for the most recent direction-matched,
+        non-bracket exit order for ticker, or (None, None) if none found.
 
         Exit side: 'sell' for longs, 'buy' for shorts (buy-to-cover).
-        Queries the last 20 closed orders to handle cases where several orders
-        exist for the symbol around the time of the manual close.
+        Bracket-class orders are skipped so reconcile_bracket_exits handles them.
+        The after parameter limits results to orders filled after the position's
+        entry_time, preventing stale cross-trade matches on frequently-traded tickers.
         """
         try:
             from alpaca.trading.requests import GetOrdersRequest
             from alpaca.trading.enums import QueryOrderStatus
             is_long   = trade_type in ('buy', 'long')
             exit_side = 'sell' if is_long else 'buy'
-            req    = GetOrdersRequest(symbol=ticker, status=QueryOrderStatus.CLOSED, limit=20)
+            kwargs = dict(symbol=ticker, status=QueryOrderStatus.CLOSED, limit=20)
+            if after is not None:
+                kwargs['after'] = after
+            req    = GetOrdersRequest(**kwargs)
             orders = self.executor.client.get_orders(req)
             for order in orders:
                 if order.symbol != ticker or order.filled_avg_price is None:
                     continue
                 side_str = str(order.side).lower().replace('orderside.', '')
-                if side_str == exit_side:
-                    return float(order.filled_avg_price), order
+                if side_str != exit_side:
+                    continue
+                order_class_str = str(getattr(order, 'order_class', '') or '').lower()
+                if 'bracket' in order_class_str:
+                    continue  # Bracket legs handled by reconcile_bracket_exits
+                return float(order.filled_avg_price), order
         except Exception as e:
             log_error('_get_filled_exit_order', ticker, str(e))
         return None, None

@@ -174,7 +174,7 @@ class Database:
             cur.execute(sql, list(trade.values()))
         self.conn.commit()
 
-    def update_trade_status(self, trade_id, status, exit_reason=None, exit_price=None):
+    def update_trade_status(self, trade_id, status, exit_reason=None, exit_price=None, exit_time_override=None):
         """
         Record the outcome of a closed trade.
 
@@ -184,6 +184,8 @@ class Database:
         When exit_price is provided, computes pnl and pnl_pct from the stored
         entry_price, shares, and trade_type so the dashboard and reports always
         have accurate P&L figures without requiring callers to calculate it.
+        exit_time_override, if provided, is written as exit_time instead of
+        datetime.now(). Use this when the actual broker fill timestamp is known.
         """
         pnl = None
         pnl_pct = None
@@ -205,12 +207,13 @@ class Database:
                               else (entry_price - exit_price) * shares
                     pnl_pct = pnl / (entry_price * shares)
 
+        exit_time_val = exit_time_override if exit_time_override is not None else datetime.now().isoformat()
         with self.conn.cursor() as cur:
             cur.execute(
                 'UPDATE trades SET status=%s, exit_reason=%s, exit_price=%s, '
                 'pnl=%s, pnl_pct=%s, exit_time=%s WHERE trade_id=%s',
                 (status, exit_reason, exit_price, pnl, pnl_pct,
-                 datetime.now().isoformat(), trade_id)
+                 exit_time_val, trade_id)
             )
         self.conn.commit()
 
