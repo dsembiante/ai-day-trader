@@ -400,28 +400,67 @@ class DataCollector:
 
     def get_volume_confirmation(self, ticker: str) -> tuple:
         """
-        Compare today's volume against the 20-day average using Alpaca daily bars.
-        Returns (volume_ratio, volume_confirmed) or (None, None).
-        volume_confirmed is True when volume_ratio > 1.20.
+        Compare today's projected full-day volume against the 20-day daily average.
+
+        Two-query approach:
+        - TimeFrame.Day bars (prior 30 days, end=yesterday) for the historical baseline.
+        - TimeFrame.Minute bars (today's session, 9:30 ET onward) for today's cumulative.
+
+        Requires 30 minutes of regular-session data. Returns (None, None) before
+        10:00 AM ET, on data gaps, or on API errors.
+        volume_confirmed is True when projected_ratio > 1.20.
         """
         try:
-            bars = self.alpaca.get_stock_bars(StockBarsRequest(
+            et_tz = ZoneInfo('America/New_York')
+            now_et = datetime.now(et_tz)
+            session_open_et = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+            gate_et         = now_et.replace(hour=10, minute=0,  second=0, microsecond=0)
+
+            if now_et < gate_et:
+                return None, None
+
+            minutes_elapsed = (now_et - session_open_et).total_seconds() / 60
+
+            # Query 1: historical daily bars — yesterday and earlier, last 20 trading days
+            hist_bars = self.alpaca.get_stock_bars(StockBarsRequest(
                 symbol_or_symbols=ticker,
                 timeframe=TimeFrame.Day,
-                start=datetime.now() - timedelta(days=45),
+                start=datetime.now() - timedelta(days=30),
+                end=datetime.now()   - timedelta(days=1),
             ))
-            df = bars.df.reset_index()
-            print(f'[volume_confirmation] {ticker} — {len(df)} bars returned from Alpaca')
-            if df.empty or len(df) < 21:
+            hist_df = hist_bars.df.reset_index()
+            if hist_df.empty or len(hist_df) < 20:
                 return None, None
-            avg_volume = float(df['volume'].iloc[-21:-1].mean())  # 20-day avg, excluding today
-            today_volume = float(df['volume'].iloc[-1])
+            avg_volume = float(hist_df['volume'].iloc[-20:].mean())
             if avg_volume == 0:
                 return None, None
-            volume_ratio = today_volume / avg_volume
-            _vol_threshold = 1.20
-            _vol_verdict = 'CONFIRMED' if volume_ratio > _vol_threshold else 'REJECTED'
-            print(f'[volume_confirmation] {ticker} — current vol {volume_ratio:.2f}x avg, threshold {_vol_threshold:.2f}x → {_vol_verdict}')
+
+            # Query 2: today's minute bars — regular session only (9:30 ET onward)
+            min_bars = self.alpaca.get_stock_bars(StockBarsRequest(
+                symbol_or_symbols=ticker,
+                timeframe=TimeFrame.Minute,
+                start=datetime.now() - timedelta(hours=8),
+            ))
+            min_df = min_bars.df.reset_index()
+            if min_df.empty:
+                return None, None
+            ts = min_df['timestamp']
+            if ts.dt.tz is None:
+                ts = ts.dt.tz_localize('UTC')
+            min_df = min_df[ts >= session_open_et]
+            if min_df.empty:
+                return None, None
+
+            today_cumulative = float(min_df['volume'].sum())
+            projected        = today_cumulative * (390.0 / max(minutes_elapsed, 1.0))
+            volume_ratio     = projected / avg_volume
+            _vol_threshold   = 1.20
+            _vol_verdict     = 'CONFIRMED' if volume_ratio > _vol_threshold else 'REJECTED'
+            print(
+                f'[volume_confirmation] {ticker} — today {today_cumulative:,.0f} shares over '
+                f'{minutes_elapsed:.0f}min projects to {projected:,.0f} '
+                f'({volume_ratio:.2f}x avg) → {_vol_verdict}'
+            )
             return float(volume_ratio), volume_ratio > _vol_threshold
         except Exception as e:
             log_error('volume_confirmation', ticker, str(e))
