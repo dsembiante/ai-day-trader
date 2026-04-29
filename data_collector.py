@@ -31,6 +31,7 @@ import pandas_ta as ta
 import json, os
 from datetime import datetime, timedelta
 from typing import Optional
+from zoneinfo import ZoneInfo
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
@@ -291,10 +292,20 @@ class DataCollector:
 
     def get_vwap(self, ticker: str) -> tuple:
         """
-        Calculate today's VWAP from 1-minute Alpaca bars using close × volume.
-        Returns (vwap, price_above_vwap) or (None, None) on failure.
+        Calculate today's intraday VWAP from 1-minute Alpaca bars using close × volume.
+        Only regular-session bars (9:30 AM ET onward) are included — pre-market bars
+        are excluded to prevent skewed VWAP on gap-up or gap-down open days.
+        Returns (vwap, price_above_vwap) or (None, None) on failure or pre-market.
         """
         try:
+            et_tz = ZoneInfo('America/New_York')
+            now_et = datetime.now(et_tz)
+            session_open_et = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+
+            # Called before regular session opens — no valid intraday bars yet
+            if now_et < session_open_et:
+                return None, None
+
             bars = self.alpaca.get_stock_bars(StockBarsRequest(
                 symbol_or_symbols=ticker,
                 timeframe=TimeFrame.Minute,
@@ -303,9 +314,27 @@ class DataCollector:
             df = bars.df.reset_index()
             if df.empty:
                 return None, None
+
+            n_total = len(df)
+
+            # Filter to regular-session bars only.
+            # Alpaca timestamps are UTC-aware; session_open_et is ET-aware.
+            # Pandas compares tz-aware datetimes across zones correctly.
+            ts = df['timestamp']
+            if ts.dt.tz is None:
+                ts = ts.dt.tz_localize('UTC')
+            df = df[ts >= session_open_et]
+
+            if df.empty:
+                return None, None
+
+            n_retained = len(df)
             vwap_series = (df['close'] * df['volume']).cumsum() / df['volume'].cumsum()
-            vwap_val = float(vwap_series.iloc[-1])
+            vwap_val    = float(vwap_series.iloc[-1])
             current_price = float(df['close'].iloc[-1])
+
+            print(f'[vwap] {ticker} — {n_total} total bars → {n_retained} regular-session bars → vwap=${vwap_val:.2f}')
+
             return vwap_val, current_price > vwap_val
         except Exception as e:
             log_error('vwap', ticker, str(e))
