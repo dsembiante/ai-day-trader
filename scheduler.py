@@ -167,7 +167,7 @@ def pre_close_run():
 
 def run_monitor_check():
     """
-    5-minute lightweight position exit check — no entry evaluation, no Groq calls.
+    1-minute lightweight position exit check — no entry evaluation, no Groq calls.
 
     Runs throughout the trading day on all schedule modes. Catches stop-loss,
     take-profit, and profit threshold exits faster than the full cycle interval.
@@ -295,13 +295,13 @@ elif config.run_mode == RunMode.INTRADAY_SMART:
     schedule.every().day.at('16:00').do(end_of_day)
 
 
-# ── 5-Minute Position Monitor (all run modes) ────────────────────────────────
-# Lightweight exit checks run every 5 minutes from market open to pre-close,
+# ── 1-Minute Position Monitor (all run modes) ────────────────────────────────
+# Lightweight exit checks run every minute from market open to pre-close,
 # independent of the full entry-evaluation schedule. Provides faster reaction
 # to stop-loss / take-profit / dynamic profit threshold triggers between full
 # cycles, especially during the 15-minute mid-day window.
 for _hour in range(9, 16):
-    for _minute in range(0, 60, 5):
+    for _minute in range(0, 60):
         if _hour == 9 and _minute < 30:
             continue  # Before market open
         if _hour == 15 and _minute > 45:
@@ -342,7 +342,7 @@ def news_monitor_loop():
 # ── Process Entrypoint ────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
-    print('Trading scheduler started — Full cycle: 10min (entries + exits), Position monitor: 5min (exits only)')
+    print('Trading scheduler started — Full cycle: 10min (entries + exits), Position monitor: 1min (exits only)')
 
     # Start news monitor as a daemon thread — exits automatically when the
     # main process exits, no cleanup required.

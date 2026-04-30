@@ -114,7 +114,7 @@ def run_position_monitor_only():
     """
     Lightweight exit check — runs position monitoring only, no entry evaluation.
 
-    Called by scheduler.py every 5 minutes throughout the trading day.
+    Called by scheduler.py every minute throughout the trading day.
     No Groq/LLM calls are made. Covers:
         - Bracket exit reconciliation
         - Stop-loss / take-profit / time-based exits
