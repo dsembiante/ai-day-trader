@@ -335,6 +335,17 @@ class PositionMonitor:
                     exit_reason = 'vwap_cross_exit'
                     print(f'📉 {ticker} dropped below VWAP ({vwap_val:.2f}) — exiting long')
 
+            # Stagnant loss exit — 20+ min held, currently losing, and never reached +0.05%
+            # Covers positions that entered wrong and drifted negative without any favorable move.
+            if exit_reason is None and gain_pct is not None and minutes_held >= 20 and gain_pct < 0:
+                _mfe = trade.get('max_favorable_excursion_pct') or 0.0
+                if _mfe <= 0.0005:
+                    exit_reason = 'stagnant_loss_exit'
+                    print(
+                        f'🧊 {ticker} stagnant_loss_exit — held {minutes_held:.0f}min, '
+                        f'MFE {_mfe*100:.2f}%, current {gain_pct*100:.2f}%'
+                    )
+
             # Tiered profit lock — bar lowers as hold time increases
             if exit_reason is None and gain_pct is not None and minutes_held >= 2 and gain_pct >= 0.003:
                 exit_reason = 'PROFIT_2MIN_030'
