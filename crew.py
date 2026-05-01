@@ -998,6 +998,29 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 Price vs ORB high %: {f'{_get_price_vs_orb_high(market_data.current_price, market_data.opening_range_high):.2f}%' if market_data.opening_range_high and market_data.current_price else 'N/A'}
             '''
 
+            # ── Counter-Trend Short Filter ────────────────────────────────────
+            # Count how many of 3 signals suggest this is an uptrending stock.
+            # 2+ strikes: inject a prompt warning requiring 4/4 bearish signals
+            # and 0.92 confidence before a SHORT is approved. A post-crew hard
+            # gate enforces the confidence floor even if the LLM ignores the prompt.
+            _counter_trend_strikes = sum([
+                bool(market_data.gap_pct and market_data.gap_pct > 0.5),
+                bool(market_data.orb_breakout_up),
+                market_regime == 'bull',
+            ])
+            if _counter_trend_strikes >= 2:
+                _ct_detail = (
+                    f'gap={market_data.gap_pct:.1f}%' if market_data.gap_pct else 'gap=N/A',
+                    f'orb_breakout={market_data.orb_breakout_up}',
+                    f'regime={market_regime.upper()}',
+                )
+                summary += (
+                    f'\n\n⚠️ COUNTER-TREND SHORT ALERT ({_counter_trend_strikes}/3 signals: '
+                    f'{", ".join(_ct_detail)}): This stock shows uptrend characteristics. '
+                    f'If recommending SHORT, require ALL 4/4 bearish signals confirmed '
+                    f'and confidence >= 0.92. If either condition is not met, set execute=false.'
+                )
+
             # ── Task Creation ─────────────────────────────────────────────────
             # Tasks are created fresh per ticker because the description prompt
             # embeds the ticker symbol and market data summary.
@@ -1121,6 +1144,18 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
             # bracket orders with fractional qty, so a price is always required.
             if decision.execute and not decision.entry_price:
                 decision.entry_price = market_data.current_price
+
+            # ── Counter-Trend Short Hard Gate ─────────────────────────────────
+            # Post-crew safety net: if the LLM ignored the prompt injection above,
+            # enforce the 0.92 confidence floor deterministically before execution.
+            if decision.execute and _counter_trend_strikes >= 2:
+                _dt = str(getattr(decision.trade_type, 'value', decision.trade_type) or '').lower()
+                if _dt == 'short' and (decision.confidence or 0.0) < 0.92:
+                    print(
+                        f'[short_filter] {ticker} — blocked: {_counter_trend_strikes}/3 '
+                        f'counter-trend signals, confidence {decision.confidence:.2f} < 0.92 required'
+                    )
+                    decision.execute = False
 
             # ── Position Sizing & Execution ───────────────────────────────────
             if decision.execute and decision.trade_type:
@@ -1358,7 +1393,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                     # disables ALL dynamic exits (loss/profit/time) in position_monitor.
                     actual_entry_price = decision.entry_price or market_data.current_price
                     try:
-                        time.sleep(2)  # Allow market order to fill before querying
+                        import time as _time; _time.sleep(2)  # Allow market order to fill before querying
                         live_pos_list = executor.get_open_positions()
                         for _pos in live_pos_list:
                             if _pos['ticker'] == ticker and _pos.get('avg_entry_price'):
@@ -1616,7 +1651,7 @@ def run_single_ticker(ticker: str, headline: str, position_multiplier: float = 1
                 # Resolve actual fill price — same priority chain as main cycle
                 actual_entry_price = decision.entry_price or market_data.current_price
                 try:
-                    time.sleep(2)
+                    import time as _time; _time.sleep(2)
                     live_pos_list = executor.get_open_positions()
                     for _pos in live_pos_list:
                         if _pos['ticker'] == ticker and _pos.get('avg_entry_price'):

@@ -158,7 +158,7 @@ class TradeExecutor:
                 if type_str in ('buy',):
                     if decision.stop_loss_price and decision.stop_loss_price >= decision.entry_price:
                         print(f'[executor] {decision.ticker} — invalid stop loss above entry, recalculating')
-                        decision.stop_loss_price = round(decision.entry_price * (1 - config.intraday_stop_loss_pct), 2)
+                        decision.stop_loss_price = round(decision.entry_price * (1 - config.long_stop_loss_pct), 2)
                     if decision.take_profit_price and decision.take_profit_price <= decision.entry_price:
                         print(f'[executor] {decision.ticker} — invalid take profit below entry, recalculating')
                         decision.take_profit_price = round(decision.entry_price * (1 + config.intraday_take_profit_pct), 2)

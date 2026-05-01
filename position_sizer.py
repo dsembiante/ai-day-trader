@@ -141,6 +141,12 @@ class PositionSizer:
 
         type_str = trade_type.value if hasattr(trade_type, 'value') else str(trade_type)
         is_long = type_str in ('buy', 'long')
+
+        # Longs get a tighter stop cap for intraday — shorts keep the wider ATR cushion
+        # since covering a short at a loss requires buying back into upward momentum.
+        if hold == HoldPeriod.INTRADAY and is_long:
+            pct = min(pct, config.long_stop_loss_pct)
+
         if is_long:
             stop_price = round(entry * (1 - pct), 2)
         else:
