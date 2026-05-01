@@ -107,6 +107,27 @@ executor  = TradeExecutor()
 db        = Database()
 cb        = CircuitBreaker()  # Used by run_single_ticker for news-triggered trades
 
+# ── Gap Fade One-Strike Block ─────────────────────────────────────────────────
+# Keyed by ticker; value is {'loss': float, 'exit_time': str}.
+# Populated after every monitor/trading cycle via _refresh_gap_fade_blocks().
+# Cleared automatically when the ET calendar date advances.
+_gap_fade_blocked_today: dict = {}
+_gap_fade_block_date = None
+
+
+def _refresh_gap_fade_blocks():
+    """Sync in-memory gap_fade block set from DB. Resets at ET day boundary."""
+    global _gap_fade_blocked_today, _gap_fade_block_date
+    from zoneinfo import ZoneInfo
+    today_et = datetime.now(ZoneInfo('America/New_York')).date()
+    if _gap_fade_block_date != today_et:
+        _gap_fade_blocked_today = {}
+        _gap_fade_block_date = today_et
+    try:
+        _gap_fade_blocked_today.update(db.get_losing_gap_fade_tickers_today())
+    except Exception as e:
+        log_error('gap_fade_block_refresh', '', str(e))
+
 
 # ── Lightweight Position Monitor ─────────────────────────────────────────────
 
@@ -139,6 +160,7 @@ def run_position_monitor_only():
         monitor.reconcile_bracket_exits()
         monitor.check_all_positions()
         monitor.check_dynamic_exits()
+        _refresh_gap_fade_blocks()
 
         reversal = monitor.check_market_reversal()
         if reversal in ('cover_longs', 'cover_shorts'):
@@ -296,6 +318,7 @@ def run_gap_fade_ticker(
             'atr_pct':                market_data.atr_pct,
             'entry_time':             datetime.now().isoformat(),
             'exit_time':              None,
+            'strategy_used':          'gap_fade',
         }
         try:
             db.insert_trade(trade_record)
@@ -499,6 +522,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     monitor.reconcile_bracket_exits()
     monitor.check_all_positions()
     monitor.check_dynamic_exits()
+    _refresh_gap_fade_blocks()
 
     # ── Market Reversal Check ─────────────────────────────────────────────────
     # If SPY has moved > 2% from today's open, immediately close all positions
@@ -880,7 +904,8 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
 
             # ── Multi-Strategy Dispatchers ────────────────────────────────────
             gap_fade_traded = False
-            if config.gap_fade_enabled and gap_fade_entries_open:
+            _gap_fade_block_info = _gap_fade_blocked_today.get(ticker)
+            if config.gap_fade_enabled and gap_fade_entries_open and not _gap_fade_block_info:
                 gap_fade_traded = bool(run_gap_fade_ticker(
                     ticker, market_data, db, executor, config,
                     et_now, market_regime, vix_regime,
@@ -896,6 +921,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
             _gf_status = (
                 'disabled'             if not config.gap_fade_enabled
                 else 'skipped(window_closed)' if not gap_fade_entries_open
+                else f'skipped(blocked_after_loss: ${_gap_fade_block_info["loss"]:.2f} at {_gap_fade_block_info["exit_time"]})' if _gap_fade_block_info
                 else 'traded'          if gap_fade_traded
                 else 'evaluated(no_signal)'
             )

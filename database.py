@@ -148,6 +148,18 @@ class Database:
         except Exception:
             self.conn.rollback()
 
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'trades' AND column_name = 'strategy_used'
+                """)
+                if not cur.fetchone():
+                    cur.execute("ALTER TABLE trades ADD COLUMN strategy_used TEXT")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+
     # ── Write Operations ──────────────────────────────────────────────────────
 
     def insert_trade(self, trade: dict):
@@ -252,6 +264,45 @@ class Database:
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("SELECT * FROM trades WHERE status='open'")
             return [dict(row) for row in cur.fetchall()]
+
+    def get_losing_gap_fade_tickers_today(self) -> dict:
+        """
+        Return tickers where a gap_fade trade closed at a loss today (ET).
+
+        Used by the one-strike block to skip re-entry after a losing gap_fade.
+        Strict inequality: pnl_pct < 0 only — breakeven exits do not block.
+
+        Returns dict keyed by ticker:
+            {'loss': float (dollar P&L), 'exit_time': 'HH:MM AM/PM'}
+        """
+        today_prefix = datetime.now().strftime('%Y-%m-%d')
+        with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+                SELECT ticker, pnl, exit_time
+                FROM trades
+                WHERE strategy_used = 'gap_fade'
+                  AND pnl_pct < 0
+                  AND status = 'closed'
+                  AND exit_time >= %s
+                ORDER BY exit_time DESC
+            """, (f'{today_prefix}T00:00:00',))
+            rows = cur.fetchall()
+
+        result = {}
+        for row in rows:
+            ticker = row['ticker']
+            if ticker in result:
+                continue  # Keep most recent (DESC order)
+            exit_time_str = ''
+            try:
+                exit_time_str = datetime.fromisoformat(row['exit_time']).strftime('%I:%M %p')
+            except Exception:
+                pass
+            result[ticker] = {
+                'loss': float(row['pnl']) if row['pnl'] is not None else 0.0,
+                'exit_time': exit_time_str,
+            }
+        return result
 
     def update_entry_price(self, trade_id: str, entry_price: float):
         """
