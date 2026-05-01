@@ -335,26 +335,26 @@ class PositionMonitor:
                     exit_reason = 'vwap_cross_exit'
                     print(f'📉 {ticker} dropped below VWAP ({vwap_val:.2f}) — exiting long')
 
-            # Condition 2: fast profit lock — 3+ min held at 0.30%+ gain
-            if exit_reason is None and gain_pct is not None and minutes_held >= 3 and gain_pct >= 0.003:
-                exit_reason = 'FAST_PROFIT_3MIN_030'
-                print(
-                    f'⚡ {ticker} fast profit lock — held {minutes_held:.0f}min at {gain_pct*100:.2f}% — EXITING'
-                )
+            # Tiered profit lock — bar lowers as hold time increases
+            if exit_reason is None and gain_pct is not None and minutes_held >= 2 and gain_pct >= 0.003:
+                exit_reason = 'PROFIT_2MIN_030'
+                print(f'⚡ {ticker} profit lock — held {minutes_held:.0f}min at {gain_pct*100:.2f}% (>= 0.30%) — EXITING')
 
-            # Condition 3: patient profit lock — 10+ min held at 0.20%+ gain
-            if exit_reason is None and gain_pct is not None and minutes_held >= 10 and gain_pct >= 0.002:
-                exit_reason = 'PATIENT_PROFIT_10MIN_020'
-                print(
-                    f'🔒 {ticker} patient profit lock — held {minutes_held:.0f}min at {gain_pct*100:.2f}% — EXITING'
-                )
+            if exit_reason is None and gain_pct is not None and minutes_held >= 3 and gain_pct >= 0.002:
+                exit_reason = 'PROFIT_3MIN_020'
+                print(f'⚡ {ticker} profit lock — held {minutes_held:.0f}min at {gain_pct*100:.2f}% (>= 0.20%) — EXITING')
 
-            # Condition 4: breakeven exit — 30+ min held with any positive gain
-            if exit_reason is None and gain_pct is not None and minutes_held >= 30 and gain_pct > 0:
-                exit_reason = 'BREAKEVEN_30MIN'
-                print(
-                    f'⏱️ {ticker} 30min+ at {gain_pct*100:.2f}% — locking breakeven profit — EXITING'
-                )
+            if exit_reason is None and gain_pct is not None and minutes_held >= 4 and gain_pct >= 0.0015:
+                exit_reason = 'PROFIT_4MIN_015'
+                print(f'⚡ {ticker} profit lock — held {minutes_held:.0f}min at {gain_pct*100:.2f}% (>= 0.15%) — EXITING')
+
+            if exit_reason is None and gain_pct is not None and minutes_held >= 10 and gain_pct >= 0.001:
+                exit_reason = 'PROFIT_10MIN_010'
+                print(f'🔒 {ticker} profit lock — held {minutes_held:.0f}min at {gain_pct*100:.2f}% (>= 0.10%) — EXITING')
+
+            if exit_reason is None and gain_pct is not None and minutes_held >= 15 and gain_pct > 0:
+                exit_reason = 'PROFIT_15MIN_ANY'
+                print(f'⏱️ {ticker} profit lock — held {minutes_held:.0f}min at {gain_pct*100:.2f}% (any positive) — EXITING')
 
             # Condition 5: ATR-tiered dynamic take-profit (handles < 30 min positions not caught above)
             if exit_reason is None and gain_pct is not None:
