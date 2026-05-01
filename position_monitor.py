@@ -344,13 +344,9 @@ class PositionMonitor:
                 exit_reason = 'PROFIT_3MIN_020'
                 print(f'⚡ {ticker} profit lock — held {minutes_held:.0f}min at {gain_pct*100:.2f}% (>= 0.20%) — EXITING')
 
-            if exit_reason is None and gain_pct is not None and minutes_held >= 4 and gain_pct >= 0.0015:
-                exit_reason = 'PROFIT_4MIN_015'
-                print(f'⚡ {ticker} profit lock — held {minutes_held:.0f}min at {gain_pct*100:.2f}% (>= 0.15%) — EXITING')
-
-            if exit_reason is None and gain_pct is not None and minutes_held >= 10 and gain_pct >= 0.001:
-                exit_reason = 'PROFIT_10MIN_010'
-                print(f'🔒 {ticker} profit lock — held {minutes_held:.0f}min at {gain_pct*100:.2f}% (>= 0.10%) — EXITING')
+            if exit_reason is None and gain_pct is not None and minutes_held >= 10 and gain_pct >= 0.0015:
+                exit_reason = 'PROFIT_10MIN_015'
+                print(f'🔒 {ticker} profit lock — held {minutes_held:.0f}min at {gain_pct*100:.2f}% (>= 0.15%) — EXITING')
 
             if exit_reason is None and gain_pct is not None and minutes_held >= 15 and gain_pct > 0:
                 exit_reason = 'PROFIT_15MIN_ANY'
