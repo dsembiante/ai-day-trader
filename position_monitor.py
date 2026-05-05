@@ -270,13 +270,39 @@ class PositionMonitor:
 
             exit_reason = None
 
+            # ── [HIGHEST PRIORITY] Fast reversal exit ──────────────────────────────
+            # Thesis broken: price moved 0.3%+ against entry within first 10 minutes
+            # AND 3 of the last 5 cycle snapshots confirm the adverse side.
+            # Edge case — < 5 snapshots: guard skips rule, falls through to existing checks.
+            if exit_reason is None and current_price is not None and entry_price and minutes_held < 10:
+                threshold_breached = (
+                    (not is_long and current_price > entry_price * 1.003) or
+                    (is_long     and current_price < entry_price * 0.997)
+                )
+                if threshold_breached:
+                    history = self._price_history.get(trade_id, [])
+                    if len(history) >= 5:
+                        losing_bars = sum(
+                            1 for p in history[-5:]
+                            if (is_long and p < entry_price) or (not is_long and p > entry_price)
+                        )
+                        if losing_bars >= 3:
+                            pct_against = abs(current_price - entry_price) / entry_price * 100
+                            direction   = 'LONG' if is_long else 'SHORT'
+                            exit_reason = 'thesis_broken_fast_reversal'
+                            print(
+                                f'[fast_reversal_exit] {ticker} {direction} @ entry ${entry_price:.2f} → '
+                                f'exit ${current_price:.2f} ({pct_against:.2f}% against, '
+                                f'{minutes_held:.0f}min, {losing_bars}/5 bars losing) — thesis broken'
+                            )
+
             # Momentum fade detection — two consecutive declining cycles while below entry.
             # For longs: fade = price dropped each of the last 2 cycles AND below entry.
             # For shorts: fade = price rose each of the last 2 cycles AND above entry.
             if exit_reason is None and current_price is not None and entry_price and minutes_held >= 10:
                 history = self._price_history.get(trade_id, [])
                 if len(history) >= 2:
-                    older_price, last_price = history[0], history[1]
+                    older_price, last_price = history[-2], history[-1]
                     below_entry = (is_long and current_price < entry_price) or (not is_long and current_price > entry_price)
                     fading      = (is_long and current_price < last_price < older_price) or (not is_long and current_price > last_price > older_price)
                     if below_entry and fading:
@@ -287,10 +313,10 @@ class PositionMonitor:
                             f'price {direction} 2 consecutive cycles while against entry — exiting'
                         )
 
-            # Update price history for this trade — keep last 2 prices only
+            # Update price history for this trade — keep last 5 prices for fast_reversal persistence check
             if current_price is not None:
                 history = self._price_history.get(trade_id, [])
-                self._price_history[trade_id] = (history + [current_price])[-2:]
+                self._price_history[trade_id] = (history + [current_price])[-5:]
 
             # Time-based loss exit — cut losing positions early before the bracket fires.
             # Triggers only after 20 min held. Threshold mirrors ATR stop tiers so
