@@ -689,10 +689,17 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
             # ── Exit Re-evaluation for Held Positions ─────────────────────────
             # If we hold this ticker, run a 1-agent exit evaluation before
             # deciding whether to skip it for new entry analysis.
-            if ticker in alpaca_held_tickers or ticker in db_open_tickers:
-                db_trade = db_open_trades_by_ticker.get(ticker)
-                trade_type = db_trade.get('trade_type', 'buy') if db_trade else 'buy'
-                entry_price = db_trade.get('entry_price') if db_trade else None
+            #
+            # DB is the authoritative source for whether a position is open.
+            # Alpaca's /v2/positions endpoint has multi-second latency after a
+            # close order is submitted — Gate 1 (position_monitor) can close a
+            # position and write status='closed' to DB while Alpaca still shows
+            # it in get_open_positions(). Using the stale Alpaca snapshot caused
+            # double-close attempts and phantom DB records with None exit_price.
+            if ticker in db_open_trades_by_ticker:
+                db_trade = db_open_trades_by_ticker[ticker]  # guaranteed non-None
+                trade_type = db_trade.get('trade_type', 'buy')
+                entry_price = db_trade.get('entry_price')
                 is_long = trade_type in ('buy', 'long')
 
                 # Recovery: if entry_price is NULL or $0.00, recover from Alpaca in order:
