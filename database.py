@@ -20,7 +20,7 @@ Usage:
 import os
 import psycopg2
 import psycopg2.extras
-from datetime import datetime
+from datetime import datetime, timedelta
 from config import config
 
 
@@ -364,6 +364,11 @@ class Database:
         """
         is_long = trade_type in ('buy', 'long')
         direction_types = ('buy', 'long') if is_long else ('short', 'sell_short')
+        # exit_time is stored as a naive ISO string via datetime.now().isoformat()
+        # (local time, no timezone).  Casting to ::timestamptz would interpret it
+        # as UTC and produce a ~5-hour mismatch on Eastern-time machines.  Instead,
+        # build the cutoff in Python so both sides use the same clock.
+        cutoff = (datetime.now() - timedelta(minutes=minutes)).isoformat()
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
                 """
@@ -371,11 +376,11 @@ class Database:
                 WHERE ticker = %s
                   AND status = 'closed'
                   AND trade_type = ANY(%s)
-                  AND exit_time::timestamptz >= NOW() - INTERVAL '%s minutes'
+                  AND exit_time >= %s
                 ORDER BY exit_time DESC
                 LIMIT 1
                 """,
-                (ticker, list(direction_types), minutes),
+                (ticker, list(direction_types), cutoff),
             )
             row = cur.fetchone()
             return dict(row) if row else None

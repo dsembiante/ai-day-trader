@@ -1196,8 +1196,8 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
 
                 # ── Re-entry Cooldown Gate ────────────────────────────────────
                 # Block re-entering the same ticker in the same direction within
-                # 10 minutes of the previous exit. Prevents immediately walking
-                # back into the same conditions that just closed the position.
+                # profitable_exit_cooldown_minutes of the previous exit. Prevents
+                # immediately walking back into the same conditions that just closed.
                 _recent_exit = db.get_recent_closed_trade_by_direction(
                     ticker, trade_str, minutes=config.profitable_exit_cooldown_minutes
                 )
