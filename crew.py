@@ -596,6 +596,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     # ── Intraday Crash Override ───────────────────────────────────────────────
     # If SPY is down more than 2% intraday, force bear regime regardless of the
     # golden/death cross classification — prevents longs during market crashes.
+    spy_intraday_chg = None
     try:
         spy_info = yf.Ticker('SPY').fast_info
         if spy_info.last_price and spy_info.previous_close and spy_info.previous_close > 0:
@@ -1439,6 +1440,11 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                         'atr_pct':                market_data.atr_pct,  # Stored for ATR-tiered exit logic
                         'entry_time':             datetime.now().isoformat(),
                         'exit_time':              None,       # Populated at close
+                        'vix_at_entry':           market_data.vix,
+                        'spy_change_pct':         spy_intraday_chg,
+                        'orb_score':              market_data.orb_score,
+                        'orb_direction':          market_data.orb_direction,
+                        'gap_pct':                market_data.gap_pct,
                     }
 
                     # Write to both persistence layers — SQLite for querying,

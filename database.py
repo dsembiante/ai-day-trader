@@ -160,6 +160,66 @@ class Database:
         except Exception:
             self.conn.rollback()
 
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'trades' AND column_name = 'vix_at_entry'
+                """)
+                if not cur.fetchone():
+                    cur.execute("ALTER TABLE trades ADD COLUMN vix_at_entry REAL")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'trades' AND column_name = 'spy_change_pct'
+                """)
+                if not cur.fetchone():
+                    cur.execute("ALTER TABLE trades ADD COLUMN spy_change_pct REAL")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'trades' AND column_name = 'orb_score'
+                """)
+                if not cur.fetchone():
+                    cur.execute("ALTER TABLE trades ADD COLUMN orb_score INTEGER")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'trades' AND column_name = 'orb_direction'
+                """)
+                if not cur.fetchone():
+                    cur.execute("ALTER TABLE trades ADD COLUMN orb_direction TEXT")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'trades' AND column_name = 'gap_pct'
+                """)
+                if not cur.fetchone():
+                    cur.execute("ALTER TABLE trades ADD COLUMN gap_pct REAL")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+
     # ── Write Operations ──────────────────────────────────────────────────────
 
     def insert_trade(self, trade: dict):

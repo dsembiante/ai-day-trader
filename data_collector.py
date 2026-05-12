@@ -254,6 +254,44 @@ class DataCollector:
         volume_ratio, volume_confirmed                       = self.get_volume_confirmation(ticker)
         atr_pct                                              = self.get_atr(ticker, current_price)
 
+        # ── ORB Score ─────────────────────────────────────────────────────────
+        if orb_breakout_up is not None:
+            if orb_breakout_up:
+                orb_direction = 'long'
+            elif orb_breakout_down:
+                orb_direction = 'short'
+            else:
+                orb_direction = 'neutral'
+        else:
+            orb_direction = None
+
+        orb_score = None
+        if orb_direction == 'neutral':
+            orb_score = 0
+        elif orb_direction is not None:
+            is_long = orb_direction == 'long'
+            _gap_aligned = None
+            if gap_pct is not None:
+                _gap_aligned = (
+                    (is_long and gap_pct > 0.5) or
+                    (not is_long and gap_pct < -0.5)
+                )
+            _spy_aligned = None
+            try:
+                _spy_info = yf.Ticker('SPY').fast_info
+                if _spy_info.last_price and _spy_info.previous_close and _spy_info.previous_close > 0:
+                    _spy_aligned = (_spy_info.last_price > _spy_info.previous_close) == is_long
+            except Exception:
+                pass
+            _vwap_aligned = (price_above_vwap is True) == is_long
+            _confirmations = sum([
+                bool(_gap_aligned),
+                bool(_spy_aligned),
+                bool(volume_confirmed),
+                bool(_vwap_aligned),
+            ])
+            orb_score = _confirmations if is_long else -_confirmations
+
         # ── Assemble & Return ─────────────────────────────────────────────────
         return MarketData(
             ticker=ticker,
@@ -279,6 +317,8 @@ class DataCollector:
             opening_range_low=opening_range_low,
             orb_breakout_up=orb_breakout_up,
             orb_breakout_down=orb_breakout_down,
+            orb_score=orb_score,
+            orb_direction=orb_direction,
             gap_pct=gap_pct,
             gap_is_bullish=gap_is_bullish,
             gap_is_bearish=gap_is_bearish,

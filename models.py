@@ -82,6 +82,8 @@ class MarketData(BaseModel):
     opening_range_low: Optional[float] = None   # Low of first 30-min candle range
     orb_breakout_up: Optional[bool] = None      # True if price broke above opening range high
     orb_breakout_down: Optional[bool] = None    # True if price broke below opening range low
+    orb_score: Optional[int] = None             # ORB confirming signals score -4 to +4
+    orb_direction: Optional[str] = None         # long / short / neutral
 
     # Pre-market gap (via fast_info)
     gap_pct: Optional[float] = None             # (last_price - prev_close) / prev_close * 100
