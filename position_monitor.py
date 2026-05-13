@@ -117,6 +117,11 @@ class PositionMonitor:
 
         for trade in open_trades:
             ticker = trade['ticker']
+            entry_dt     = datetime.fromisoformat(trade['entry_time'])
+            seconds_held = (datetime.now() - entry_dt).total_seconds()
+            if seconds_held < 60:
+                continue  # Too new — skip reconciliation
+
             if ticker in live_positions:
                 continue  # Position still open — nothing to reconcile
 
