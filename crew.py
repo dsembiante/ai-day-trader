@@ -728,6 +728,11 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                         print(f'⚠️  No price data for {ticker} — skipping exit evaluation')
                         continue
 
+                    entry_dt     = datetime.fromisoformat(db_trade['entry_time'])
+                    minutes_held = (datetime.now() - entry_dt).total_seconds() / 60
+                    if minutes_held < 5:
+                        continue  # Too new — skip exit evaluation
+
                     exit_summary = f'''
                         Ticker: {ticker}
                         Price: ${market_data.current_price:.2f}
@@ -818,7 +823,7 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                     except Exception:
                         pass  # Position detail is non-critical observability
 
-                    if should_exit and exit_confidence >= 0.75:
+                    if should_exit and exit_confidence >= 0.85:
                         print(f'✅ Agent recommends EXIT {ticker} — {exit_reasoning}')
                         executor.close_position(ticker, trade_type)
                         import time as _time; _time.sleep(2)
