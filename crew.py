@@ -1374,13 +1374,13 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 # Skips on data failure (None) so a bad fetch never blocks a trade.
                 _spy_momentum = _get_2bar_momentum('SPY')
                 if _spy_momentum is not None:
-                    if trade_str == 'buy' and _spy_momentum < 0:
+                    if trade_str == 'buy' and _spy_momentum < -0.15:
                         print(
                             f'⏭️ {ticker} — LONG skipped: SPY trending down '
                             f'({_spy_momentum:+.2f}%), no market tailwind'
                         )
                         continue
-                    elif trade_str in ('short', 'sell_short') and _spy_momentum > 0:
+                    elif trade_str in ('short', 'sell_short') and _spy_momentum > 0.15:
                         print(
                             f'⏭️ {ticker} — SHORT skipped: SPY trending up '
                             f'({_spy_momentum:+.2f}%), no market tailwind'

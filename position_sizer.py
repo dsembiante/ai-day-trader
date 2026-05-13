@@ -123,8 +123,10 @@ class PositionSizer:
                     pct = 0.0075   # 0.75% — low-vol names
                 elif atr_pct < 3.5:
                     pct = 0.0100   # 1.00% — med-vol names
-                else:
+                elif atr_pct < 5.0:
                     pct = 0.0150   # 1.50% — high-vol names
+                else:
+                    pct = 0.0250   # 2.50% — extreme-vol names
                 self._last_atr_stop_pct = pct
             else:
                 # ATR unavailable — use medium-tier default rather than wide config fallback
@@ -145,7 +147,8 @@ class PositionSizer:
         # Longs get a tighter stop cap for intraday — shorts keep the wider ATR cushion
         # since covering a short at a loss requires buying back into upward momentum.
         if hold == HoldPeriod.INTRADAY and is_long:
-            pct = min(pct, config.long_stop_loss_pct)
+            cap = 0.0250 if (atr_pct is not None and atr_pct >= 5.0) else config.long_stop_loss_pct
+            pct = min(pct, cap)
 
         if is_long:
             stop_price = round(entry * (1 - pct), 2)
@@ -189,8 +192,10 @@ class PositionSizer:
                 pct = 0.0150   # 1.5% — low-vol names  (2:1 on 0.75% stop)
             elif atr_pct < 3.5:
                 pct = 0.0200   # 2.0% — med-vol names  (2:1 on 1.00% stop)
-            else:
+            elif atr_pct < 5.0:
                 pct = 0.0300   # 3.0% — high-vol names (2:1 on 1.50% stop)
+            else:
+                pct = 0.0500   # 5.0% — extreme-vol names (2:1 on 2.50% stop)
             self._last_atr_target_pct = pct
         else:
             pct = {
