@@ -187,7 +187,7 @@ def run_position_monitor_only():
 
 def run_gap_fade_ticker(
     ticker, market_data, db, executor, config,
-    et_now, market_regime, vix_regime,
+    et_now, market_regime, vix_regime, spy_intraday_chg=None,
 ):
     """Gap fade pipeline for a single ticker. Returns immediately if not qualified."""
     if market_data.gap_pct is None or abs(market_data.gap_pct) < config.gap_fade_min_gap_pct:
@@ -292,33 +292,58 @@ def run_gap_fade_ticker(
                     break
         except Exception:
             pass
+        _exh = collector.get_exhaustion_metrics(
+            ticker, trade_str, actual_entry_price,
+            market_data.opening_range_high, market_data.opening_range_low,
+        )
+        _dist_vwap = (
+            round((actual_entry_price - market_data.vwap) / market_data.vwap * 100, 4)
+            if market_data.vwap else None
+        )
+        _dist_orb_high = (
+            round((actual_entry_price - market_data.opening_range_high) / market_data.opening_range_high * 100, 4)
+            if market_data.opening_range_high else None
+        )
+        _dist_orb_low = (
+            round((actual_entry_price - market_data.opening_range_low) / market_data.opening_range_low * 100, 4)
+            if market_data.opening_range_low else None
+        )
         trade_record = {
-            'trade_id':               str(uuid.uuid4()),
-            'ticker':                 ticker,
-            'trade_type':             decision.trade_type,
-            'order_type':             decision.order_type,
-            'hold_period':            decision.hold_period,
-            'max_hold_days':          1,
-            'entry_price':            actual_entry_price,
-            'exit_price':             None,
-            'shares':                 sizing['shares'],
-            'position_size_usd':      _adjusted_size,
-            'stop_loss_price':        stop_loss,
-            'take_profit_price':      take_profit,
-            'pnl':                    None,
-            'pnl_pct':                None,
-            'status':                 'open',
-            'exit_reason':            None,
-            'confidence_at_entry':    confidence,
-            'bull_reasoning':         '',
-            'bear_reasoning':         '',
-            'risk_manager_reasoning': reasoning,
-            'hold_period_reasoning':  'intraday gap fade',
-            'data_sources_available': str(market_data.data_sources_used.model_dump()),
-            'atr_pct':                market_data.atr_pct,
-            'entry_time':             datetime.now().isoformat(),
-            'exit_time':              None,
-            'strategy_used':          'gap_fade',
+            'trade_id':                   str(uuid.uuid4()),
+            'ticker':                     ticker,
+            'trade_type':                 decision.trade_type,
+            'order_type':                 decision.order_type,
+            'hold_period':                decision.hold_period,
+            'max_hold_days':              1,
+            'entry_price':                actual_entry_price,
+            'exit_price':                 None,
+            'shares':                     sizing['shares'],
+            'position_size_usd':          _adjusted_size,
+            'stop_loss_price':            stop_loss,
+            'take_profit_price':          take_profit,
+            'pnl':                        None,
+            'pnl_pct':                    None,
+            'status':                     'open',
+            'exit_reason':                None,
+            'confidence_at_entry':        confidence,
+            'bull_reasoning':             '',
+            'bear_reasoning':             '',
+            'risk_manager_reasoning':     reasoning,
+            'hold_period_reasoning':      'intraday gap fade',
+            'data_sources_available':     str(market_data.data_sources_used.model_dump()),
+            'atr_pct':                    market_data.atr_pct,
+            'entry_time':                 datetime.now().isoformat(),
+            'exit_time':                  None,
+            'strategy_used':              'gap_fade',
+            'vix_at_entry':               market_data.vix,
+            'spy_change_pct':             spy_intraday_chg,
+            'orb_score':                  market_data.orb_score,
+            'orb_direction':              market_data.orb_direction,
+            'gap_pct':                    market_data.gap_pct,
+            'distance_from_vwap_pct':     _dist_vwap,
+            'distance_from_orb_high_pct': _dist_orb_high,
+            'distance_from_orb_low_pct':  _dist_orb_low,
+            **_exh,
         }
         try:
             db.insert_trade(trade_record)
@@ -332,7 +357,7 @@ def run_gap_fade_ticker(
 
 def run_vwap_reversion_ticker(
     ticker, market_data, db, executor, config,
-    et_now, market_regime, vix_regime,
+    et_now, market_regime, vix_regime, spy_intraday_chg=None,
 ):
     """VWAP reversion pipeline for a single ticker. Returns immediately if not qualified."""
     if not market_data.vwap or not market_data.current_price:
@@ -440,32 +465,58 @@ def run_vwap_reversion_ticker(
                     break
         except Exception:
             pass
+        _exh = collector.get_exhaustion_metrics(
+            ticker, trade_str, actual_entry_price,
+            market_data.opening_range_high, market_data.opening_range_low,
+        )
+        _dist_vwap = (
+            round((actual_entry_price - market_data.vwap) / market_data.vwap * 100, 4)
+            if market_data.vwap else None
+        )
+        _dist_orb_high = (
+            round((actual_entry_price - market_data.opening_range_high) / market_data.opening_range_high * 100, 4)
+            if market_data.opening_range_high else None
+        )
+        _dist_orb_low = (
+            round((actual_entry_price - market_data.opening_range_low) / market_data.opening_range_low * 100, 4)
+            if market_data.opening_range_low else None
+        )
         trade_record = {
-            'trade_id':               str(uuid.uuid4()),
-            'ticker':                 ticker,
-            'trade_type':             decision.trade_type,
-            'order_type':             decision.order_type,
-            'hold_period':            decision.hold_period,
-            'max_hold_days':          1,
-            'entry_price':            actual_entry_price,
-            'exit_price':             None,
-            'shares':                 sizing['shares'],
-            'position_size_usd':      _adjusted_size,
-            'stop_loss_price':        stop_loss,
-            'take_profit_price':      take_profit,
-            'pnl':                    None,
-            'pnl_pct':                None,
-            'status':                 'open',
-            'exit_reason':            None,
-            'confidence_at_entry':    confidence,
-            'bull_reasoning':         '',
-            'bear_reasoning':         '',
-            'risk_manager_reasoning': reasoning,
-            'hold_period_reasoning':  'intraday vwap reversion',
-            'data_sources_available': str(market_data.data_sources_used.model_dump()),
-            'atr_pct':                market_data.atr_pct,
-            'entry_time':             datetime.now().isoformat(),
-            'exit_time':              None,
+            'trade_id':                   str(uuid.uuid4()),
+            'ticker':                     ticker,
+            'trade_type':                 decision.trade_type,
+            'order_type':                 decision.order_type,
+            'hold_period':                decision.hold_period,
+            'max_hold_days':              1,
+            'entry_price':                actual_entry_price,
+            'exit_price':                 None,
+            'shares':                     sizing['shares'],
+            'position_size_usd':          _adjusted_size,
+            'stop_loss_price':            stop_loss,
+            'take_profit_price':          take_profit,
+            'pnl':                        None,
+            'pnl_pct':                    None,
+            'status':                     'open',
+            'exit_reason':                None,
+            'confidence_at_entry':        confidence,
+            'bull_reasoning':             '',
+            'bear_reasoning':             '',
+            'risk_manager_reasoning':     reasoning,
+            'hold_period_reasoning':      'intraday vwap reversion',
+            'data_sources_available':     str(market_data.data_sources_used.model_dump()),
+            'atr_pct':                    market_data.atr_pct,
+            'entry_time':                 datetime.now().isoformat(),
+            'exit_time':                  None,
+            'strategy_used':              'vwap_reversion',
+            'vix_at_entry':               market_data.vix,
+            'spy_change_pct':             spy_intraday_chg,
+            'orb_score':                  market_data.orb_score,
+            'orb_direction':              market_data.orb_direction,
+            'gap_pct':                    market_data.gap_pct,
+            'distance_from_vwap_pct':     _dist_vwap,
+            'distance_from_orb_high_pct': _dist_orb_high,
+            'distance_from_orb_low_pct':  _dist_orb_low,
+            **_exh,
         }
         try:
             db.insert_trade(trade_record)
@@ -921,13 +972,13 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
             if config.gap_fade_enabled and gap_fade_entries_open and not _gap_fade_block_info:
                 gap_fade_traded = bool(run_gap_fade_ticker(
                     ticker, market_data, db, executor, config,
-                    et_now, market_regime, vix_regime,
+                    et_now, market_regime, vix_regime, spy_intraday_chg,
                 ))
 
             if vwap_reversion_open:
                 run_vwap_reversion_ticker(
                     ticker, market_data, db, executor, config,
-                    et_now, market_regime, vix_regime,
+                    et_now, market_regime, vix_regime, spy_intraday_chg,
                 )
 
             # ── Strategy Eligibility Log (Item 3) ────────────────────────────
@@ -1416,40 +1467,62 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                     except Exception as _e:
                         print(f'[executor] {ticker} — could not fetch Alpaca fill price, using estimate: {_e}')
 
+                    _exh = collector.get_exhaustion_metrics(
+                        ticker, decision.trade_type, actual_entry_price,
+                        market_data.opening_range_high, market_data.opening_range_low,
+                    )
+                    _dist_vwap = (
+                        round((actual_entry_price - market_data.vwap) / market_data.vwap * 100, 4)
+                        if market_data.vwap else None
+                    )
+                    _dist_orb_high = (
+                        round((actual_entry_price - market_data.opening_range_high) / market_data.opening_range_high * 100, 4)
+                        if market_data.opening_range_high else None
+                    )
+                    _dist_orb_low = (
+                        round((actual_entry_price - market_data.opening_range_low) / market_data.opening_range_low * 100, 4)
+                        if market_data.opening_range_low else None
+                    )
+
                     # Build the full trade record for both SQLite and the JSON journal.
                     # trade_id is a UUID generated here rather than by the database so
                     # it can be referenced in logs before the DB write completes.
                     trade_record = {
-                        'trade_id':               str(uuid.uuid4()),
-                        'ticker':                 ticker,
-                        'trade_type':             decision.trade_type,
-                        'order_type':             decision.order_type,
-                        'hold_period':            decision.hold_period,
-                        'max_hold_days':          decision.max_hold_days,
-                        'entry_price':            actual_entry_price,
-                        'exit_price':             None,       # Populated at close
-                        'shares':                 sizing['shares'],
-                        'position_size_usd':      sizing['position_usd'],
-                        'stop_loss_price':        decision.stop_loss_price,
-                        'take_profit_price':      decision.take_profit_price,
-                        'pnl':                    None,       # Populated at close
-                        'pnl_pct':                None,       # Populated at close
-                        'status':                 'open',
-                        'exit_reason':            None,       # Set by position_monitor or executor
-                        'confidence_at_entry':    decision.confidence,
-                        'bull_reasoning':         decision.bull_reasoning,
-                        'bear_reasoning':         decision.bear_reasoning,
-                        'risk_manager_reasoning': decision.risk_manager_reasoning,
-                        'hold_period_reasoning':  decision.hold_period_reasoning,
-                        'data_sources_available': str(market_data.data_sources_used.model_dump()),
-                        'atr_pct':                market_data.atr_pct,  # Stored for ATR-tiered exit logic
-                        'entry_time':             datetime.now().isoformat(),
-                        'exit_time':              None,       # Populated at close
-                        'vix_at_entry':           market_data.vix,
-                        'spy_change_pct':         spy_intraday_chg,
-                        'orb_score':              market_data.orb_score,
-                        'orb_direction':          market_data.orb_direction,
-                        'gap_pct':                market_data.gap_pct,
+                        'trade_id':                   str(uuid.uuid4()),
+                        'ticker':                     ticker,
+                        'trade_type':                 decision.trade_type,
+                        'order_type':                 decision.order_type,
+                        'hold_period':                decision.hold_period,
+                        'max_hold_days':              decision.max_hold_days,
+                        'entry_price':                actual_entry_price,
+                        'exit_price':                 None,       # Populated at close
+                        'shares':                     sizing['shares'],
+                        'position_size_usd':          sizing['position_usd'],
+                        'stop_loss_price':            decision.stop_loss_price,
+                        'take_profit_price':          decision.take_profit_price,
+                        'pnl':                        None,       # Populated at close
+                        'pnl_pct':                    None,       # Populated at close
+                        'status':                     'open',
+                        'exit_reason':                None,       # Set by position_monitor or executor
+                        'confidence_at_entry':        decision.confidence,
+                        'bull_reasoning':             decision.bull_reasoning,
+                        'bear_reasoning':             decision.bear_reasoning,
+                        'risk_manager_reasoning':     decision.risk_manager_reasoning,
+                        'hold_period_reasoning':      decision.hold_period_reasoning,
+                        'data_sources_available':     str(market_data.data_sources_used.model_dump()),
+                        'atr_pct':                    market_data.atr_pct,  # Stored for ATR-tiered exit logic
+                        'entry_time':                 datetime.now().isoformat(),
+                        'exit_time':                  None,       # Populated at close
+                        'strategy_used':              'momentum',
+                        'vix_at_entry':               market_data.vix,
+                        'spy_change_pct':             spy_intraday_chg,
+                        'orb_score':                  market_data.orb_score,
+                        'orb_direction':              market_data.orb_direction,
+                        'gap_pct':                    market_data.gap_pct,
+                        'distance_from_vwap_pct':     _dist_vwap,
+                        'distance_from_orb_high_pct': _dist_orb_high,
+                        'distance_from_orb_low_pct':  _dist_orb_low,
+                        **_exh,
                     }
 
                     # Write to both persistence layers — SQLite for querying,
@@ -1679,33 +1752,67 @@ def run_single_ticker(ticker: str, headline: str, position_multiplier: float = 1
                 except Exception as _e:
                     print(f'[executor] {ticker} (news) — could not fetch Alpaca fill price, using estimate: {_e}')
 
+                _news_spy_chg = None
+                try:
+                    _spy_fi = yf.Ticker('SPY').fast_info
+                    if _spy_fi.last_price and _spy_fi.previous_close and _spy_fi.previous_close > 0:
+                        _news_spy_chg = (_spy_fi.last_price - _spy_fi.previous_close) / _spy_fi.previous_close
+                except Exception:
+                    pass
+                _exh = collector.get_exhaustion_metrics(
+                    ticker, decision.trade_type, actual_entry_price,
+                    market_data.opening_range_high, market_data.opening_range_low,
+                )
+                _dist_vwap = (
+                    round((actual_entry_price - market_data.vwap) / market_data.vwap * 100, 4)
+                    if market_data.vwap else None
+                )
+                _dist_orb_high = (
+                    round((actual_entry_price - market_data.opening_range_high) / market_data.opening_range_high * 100, 4)
+                    if market_data.opening_range_high else None
+                )
+                _dist_orb_low = (
+                    round((actual_entry_price - market_data.opening_range_low) / market_data.opening_range_low * 100, 4)
+                    if market_data.opening_range_low else None
+                )
+
                 trade_record = {
-                    'trade_id':               str(uuid.uuid4()),
-                    'ticker':                 ticker,
-                    'trade_type':             decision.trade_type,
-                    'order_type':             decision.order_type,
-                    'hold_period':            decision.hold_period,
-                    'max_hold_days':          decision.max_hold_days,
-                    'entry_price':            actual_entry_price,
-                    'exit_price':             None,
-                    'shares':                 sizing['shares'],
-                    'position_size_usd':      sizing['position_usd'],
-                    'stop_loss_price':        decision.stop_loss_price,
-                    'take_profit_price':      decision.take_profit_price,
-                    'pnl':                    None,
-                    'pnl_pct':                None,
-                    'status':                 'open',
+                    'trade_id':                   str(uuid.uuid4()),
+                    'ticker':                     ticker,
+                    'trade_type':                 decision.trade_type,
+                    'order_type':                 decision.order_type,
+                    'hold_period':                decision.hold_period,
+                    'max_hold_days':              decision.max_hold_days,
+                    'entry_price':                actual_entry_price,
+                    'exit_price':                 None,
+                    'shares':                     sizing['shares'],
+                    'position_size_usd':          sizing['position_usd'],
+                    'stop_loss_price':            decision.stop_loss_price,
+                    'take_profit_price':          decision.take_profit_price,
+                    'pnl':                        None,
+                    'pnl_pct':                    None,
+                    'status':                     'open',
                     # exit_reason stores the triggering headline for audit trail
-                    'exit_reason':            f'news_triggered: {headline[:50]}',
-                    'confidence_at_entry':    decision.confidence,
-                    'bull_reasoning':         decision.bull_reasoning,
-                    'bear_reasoning':         decision.bear_reasoning,
-                    'risk_manager_reasoning': decision.risk_manager_reasoning,
-                    'hold_period_reasoning':  decision.hold_period_reasoning,
-                    'data_sources_available': str(market_data.data_sources_used.model_dump()),
-                    'atr_pct':                market_data.atr_pct,  # Stored for ATR-tiered exit logic
-                    'entry_time':             datetime.now().isoformat(),
-                    'exit_time':              None,
+                    'exit_reason':                f'news_triggered: {headline[:50]}',
+                    'confidence_at_entry':        decision.confidence,
+                    'bull_reasoning':             decision.bull_reasoning,
+                    'bear_reasoning':             decision.bear_reasoning,
+                    'risk_manager_reasoning':     decision.risk_manager_reasoning,
+                    'hold_period_reasoning':      decision.hold_period_reasoning,
+                    'data_sources_available':     str(market_data.data_sources_used.model_dump()),
+                    'atr_pct':                    market_data.atr_pct,  # Stored for ATR-tiered exit logic
+                    'entry_time':                 datetime.now().isoformat(),
+                    'exit_time':                  None,
+                    'strategy_used':              'news_triggered',
+                    'vix_at_entry':               market_data.vix,
+                    'spy_change_pct':             _news_spy_chg,
+                    'orb_score':                  market_data.orb_score,
+                    'orb_direction':              market_data.orb_direction,
+                    'gap_pct':                    market_data.gap_pct,
+                    'distance_from_vwap_pct':     _dist_vwap,
+                    'distance_from_orb_high_pct': _dist_orb_high,
+                    'distance_from_orb_low_pct':  _dist_orb_low,
+                    **_exh,
                 }
                 try:
                     db.insert_trade(trade_record)

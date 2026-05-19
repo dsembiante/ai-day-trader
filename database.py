@@ -220,6 +220,90 @@ class Database:
         except Exception:
             self.conn.rollback()
 
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'trades' AND column_name = 'distance_from_vwap_pct'
+                """)
+                if not cur.fetchone():
+                    cur.execute("ALTER TABLE trades ADD COLUMN distance_from_vwap_pct REAL")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'trades' AND column_name = 'distance_from_orb_high_pct'
+                """)
+                if not cur.fetchone():
+                    cur.execute("ALTER TABLE trades ADD COLUMN distance_from_orb_high_pct REAL")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'trades' AND column_name = 'distance_from_orb_low_pct'
+                """)
+                if not cur.fetchone():
+                    cur.execute("ALTER TABLE trades ADD COLUMN distance_from_orb_low_pct REAL")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'trades' AND column_name = 'minutes_since_orb_breakout'
+                """)
+                if not cur.fetchone():
+                    cur.execute("ALTER TABLE trades ADD COLUMN minutes_since_orb_breakout REAL")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'trades' AND column_name = 'last_3_bars_velocity_pct'
+                """)
+                if not cur.fetchone():
+                    cur.execute("ALTER TABLE trades ADD COLUMN last_3_bars_velocity_pct REAL")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'trades' AND column_name = 'last_bar_range_pct'
+                """)
+                if not cur.fetchone():
+                    cur.execute("ALTER TABLE trades ADD COLUMN last_bar_range_pct REAL")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'trades' AND column_name = 'price_vs_recent_high_pct'
+                """)
+                if not cur.fetchone():
+                    cur.execute("ALTER TABLE trades ADD COLUMN price_vs_recent_high_pct REAL")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+
     # ── Write Operations ──────────────────────────────────────────────────────
 
     def insert_trade(self, trade: dict):

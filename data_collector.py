@@ -412,6 +412,100 @@ class DataCollector:
             log_error('opening_range', ticker, str(e))
             return None, None, None, None, None
 
+    def get_exhaustion_metrics(
+        self,
+        ticker: str,
+        trade_type: str,
+        entry_price: float,
+        orb_high: Optional[float],
+        orb_low: Optional[float],
+    ) -> dict:
+        """
+        Compute 4 exhaustion-move metrics from today's 1-minute bars.
+        Call AFTER order submission — makes one Alpaca API call (~200ms).
+        Returns a dict with 4 keys; all values are None on failure.
+        """
+        result = {
+            'minutes_since_orb_breakout': None,
+            'last_3_bars_velocity_pct':   None,
+            'last_bar_range_pct':         None,
+            'price_vs_recent_high_pct':   None,
+        }
+        try:
+            et_tz = ZoneInfo('America/New_York')
+            now_et = datetime.now(et_tz)
+            session_open_et = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+
+            bars = self.alpaca.get_stock_bars(StockBarsRequest(
+                symbol_or_symbols=ticker,
+                timeframe=TimeFrame.Minute,
+                start=datetime.now() - timedelta(hours=8),
+            ))
+            df = bars.df.reset_index()
+            if df.empty:
+                return result
+
+            ts = df['timestamp']
+            if ts.dt.tz is None:
+                ts = ts.dt.tz_localize('UTC')
+            df = df.copy()
+            df['ts_et'] = ts.dt.tz_convert('America/New_York')
+            df = df[df['ts_et'] >= session_open_et].sort_values('ts_et').reset_index(drop=True)
+
+            if len(df) < 2:
+                return result
+
+            # last_3_bars_velocity_pct: move from close[-4] to close[-1] (3-bar window)
+            if len(df) >= 4:
+                base = float(df['close'].iloc[-4])
+                if base > 0:
+                    result['last_3_bars_velocity_pct'] = round(
+                        (float(df['close'].iloc[-1]) - base) / base * 100, 4
+                    )
+
+            # last_bar_range_pct: (high - low) / low of the last completed bar
+            last_bar = df.iloc[-1]
+            low_val = float(last_bar['low'])
+            if low_val > 0:
+                result['last_bar_range_pct'] = round(
+                    (float(last_bar['high']) - low_val) / low_val * 100, 4
+                )
+
+            # price_vs_recent_high_pct: entry vs 30-minute extreme
+            recent = df.tail(30)
+            is_long = trade_type in ('buy', 'long')
+            if is_long:
+                extreme = float(recent['high'].max())
+                if extreme > 0:
+                    result['price_vs_recent_high_pct'] = round(
+                        (entry_price - extreme) / extreme * 100, 4
+                    )
+            else:
+                extreme = float(recent['low'].min())
+                if extreme > 0:
+                    result['price_vs_recent_high_pct'] = round(
+                        (entry_price - extreme) / extreme * 100, 4
+                    )
+
+            # minutes_since_orb_breakout: minutes from first post-ORB crossover to now
+            # NULL when no ORB breakout bar exists in today's session data (non-ORB trades)
+            orb_ref = orb_high if is_long else orb_low
+            if orb_ref is not None:
+                orb_end_et = now_et.replace(hour=9, minute=45, second=0, microsecond=0)
+                post_orb = df[df['ts_et'] >= orb_end_et]
+                if not post_orb.empty:
+                    mask = (post_orb['close'] > orb_ref) if is_long else (post_orb['close'] < orb_ref)
+                    breakout_rows = post_orb[mask]
+                    if not breakout_rows.empty:
+                        breakout_ts = breakout_rows.iloc[0]['ts_et']
+                        result['minutes_since_orb_breakout'] = round(
+                            (now_et - breakout_ts).total_seconds() / 60.0, 1
+                        )
+
+        except Exception as e:
+            log_error('exhaustion_metrics', ticker, str(e))
+        return result
+
     def get_premarket_gap(self, ticker: str) -> tuple:
         """
         Calculate pre-market gap using Alpaca daily bars.
