@@ -112,6 +112,11 @@ cb        = CircuitBreaker()  # Used by run_single_ticker for news-triggered tra
 # directional return). Set False to re-enable.
 BLOCK_MOMENTUM_SHORTS = True
 
+# Forward-test: agent exit recommendations have lost -$761 over 30 trades
+# (-$25 avg). Systematic exits (stops, profit targets, vwap, time, stagnant)
+# are unaffected. Set True to re-enable LLM-driven exits.
+ENABLE_AGENT_EXIT_RECOMMENDATION = False
+
 # ── Gap Fade One-Strike Block ─────────────────────────────────────────────────
 # Keyed by ticker; value is {'loss': float, 'exit_time': str}.
 # Populated after every monitor/trading cycle via _refresh_gap_fade_blocks().
@@ -880,16 +885,22 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                         pass  # Position detail is non-critical observability
 
                     if should_exit and exit_confidence >= 0.85:
-                        print(f'✅ Agent recommends EXIT {ticker} — {exit_reasoning}')
-                        executor.close_position(ticker, trade_type)
-                        import time as _time; _time.sleep(2)
-                        exit_price_filled = executor.get_filled_exit_price(ticker)
-                        if db_trade:
-                            db.update_trade_status(
-                                db_trade['trade_id'],
-                                status='closed',
-                                exit_reason='agent_exit_recommendation',
-                                exit_price=exit_price_filled,
+                        if ENABLE_AGENT_EXIT_RECOMMENDATION:
+                            print(f'✅ Agent recommends EXIT {ticker} — {exit_reasoning}')
+                            executor.close_position(ticker, trade_type)
+                            import time as _time; _time.sleep(2)
+                            exit_price_filled = executor.get_filled_exit_price(ticker)
+                            if db_trade:
+                                db.update_trade_status(
+                                    db_trade['trade_id'],
+                                    status='closed',
+                                    exit_reason='agent_exit_recommendation',
+                                    exit_price=exit_price_filled,
+                                )
+                        else:
+                            print(
+                                f'[agent_exit_disabled] {ticker} — agent recommends exit '
+                                f'(confidence {exit_confidence:.2f}) — deferring to systematic exits'
                             )
                     else:
                         print(f'⏸️  Agent recommends HOLD {ticker} — {exit_reasoning}')
