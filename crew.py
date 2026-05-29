@@ -107,6 +107,11 @@ executor  = TradeExecutor()
 db        = Database()
 cb        = CircuitBreaker()  # Used by run_single_ticker for news-triggered trades
 
+# ── Experiment Flags ──────────────────────────────────────────────────────────
+# Forward-test: momentum shorts have shown no edge (50 trades, negative
+# directional return). Set False to re-enable.
+BLOCK_MOMENTUM_SHORTS = True
+
 # ── Gap Fade One-Strike Block ─────────────────────────────────────────────────
 # Keyed by ticker; value is {'loss': float, 'exit_time': str}.
 # Populated after every monitor/trading cycle via _refresh_gap_fade_blocks().
@@ -1219,6 +1224,41 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                         f'[short_filter] {ticker} — blocked: {_counter_trend_strikes}/3 '
                         f'counter-trend signals, confidence {decision.confidence:.2f} < 0.92 required'
                     )
+                    decision.execute = False
+
+            # ── Momentum Short Block ──────────────────────────────────────────
+            # Hard gate: all momentum shorts are disabled for the forward-test
+            # period. gap_fade and vwap_reversion shorts are unaffected (those
+            # pipelines return before reaching this point in the main loop).
+            if BLOCK_MOMENTUM_SHORTS and decision.execute:
+                _block_dt = str(getattr(decision.trade_type, 'value', decision.trade_type) or '').lower()
+                if _block_dt in ('short', 'sell_short'):
+                    print(f'[momentum_short_block] {ticker} — BLOCKED: all momentum shorts disabled (experiment)')
+                    _block_vwap_dist = (
+                        round((decision.entry_price - market_data.vwap) / market_data.vwap * 100, 4)
+                        if market_data.vwap and decision.entry_price else None
+                    )
+                    try:
+                        with db.conn.cursor() as _cur:
+                            _cur.execute(
+                                '''INSERT INTO blocked_trades
+                                   (ticker, trade_type, filter_name, confidence,
+                                    distance_from_vwap_pct, last_3_bars_velocity_pct,
+                                    would_be_entry_price, strategy_used)
+                                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)''',
+                                (ticker, _block_dt, 'momentum_short_block',
+                                 decision.confidence, _block_vwap_dist,
+                                 None,
+                                 decision.entry_price or market_data.current_price,
+                                 'momentum')
+                            )
+                        db.conn.commit()
+                    except Exception as _e:
+                        try:
+                            db.conn.rollback()
+                        except Exception:
+                            pass
+                        log_error('blocked_trades_insert_fail', ticker, str(_e))
                     decision.execute = False
 
             # ── Position Sizing & Execution ───────────────────────────────────

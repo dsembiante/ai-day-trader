@@ -107,6 +107,31 @@ class Database:
                     updated_at  TEXT
                 )
             ''')
+            cur.execute('''
+                CREATE TABLE IF NOT EXISTS blocked_trades (
+                    id                      SERIAL PRIMARY KEY,
+                    block_time              TIMESTAMP NOT NULL DEFAULT NOW(),
+                    ticker                  TEXT NOT NULL,
+                    trade_type              TEXT NOT NULL,
+                    filter_name             TEXT NOT NULL,
+                    confidence              REAL,
+                    distance_from_vwap_pct  REAL,
+                    last_3_bars_velocity_pct REAL,
+                    would_be_entry_price    REAL,
+                    strategy_used           TEXT,
+                    price_at_1130           REAL,
+                    hypothetical_pnl_pct    REAL,
+                    backfill_completed_at   TIMESTAMP
+                )
+            ''')
+            cur.execute('''
+                CREATE INDEX IF NOT EXISTS idx_blocked_trades_block_time
+                ON blocked_trades (block_time)
+            ''')
+            cur.execute('''
+                CREATE INDEX IF NOT EXISTS idx_blocked_trades_ticker
+                ON blocked_trades (ticker)
+            ''')
         self.conn.commit()
 
         # ── Step 2: Column migrations — each in its own isolated transaction ──
