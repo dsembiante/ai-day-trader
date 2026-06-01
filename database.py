@@ -20,8 +20,9 @@ Usage:
 import os
 import psycopg2
 import psycopg2.extras
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from config import config
+from logger import log_error
 
 
 class Database:
@@ -169,6 +170,20 @@ class Database:
                 """)
                 if not cur.fetchone():
                     cur.execute("ALTER TABLE trades ADD COLUMN max_adverse_excursion_pct REAL")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS max_favorable_excursion_bar_pct REAL")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS max_adverse_excursion_bar_pct REAL")
             self.conn.commit()
         except Exception:
             self.conn.rollback()
@@ -398,6 +413,9 @@ class Database:
             )
         self.conn.commit()
 
+        if status == 'closed':
+            self.compute_and_store_excursion(trade_id)
+
     def upgrade_trade_to_swing(self, trade_id):
         """
         Upgrade an intraday trade to a swing trade in place of force-closing it.
@@ -498,6 +516,103 @@ class Database:
                 (mfe_pct, mae_pct, trade_id),
             )
         self.conn.commit()
+
+    def compute_and_store_excursion(self, trade_id: str):
+        """
+        After a trade closes, fetch 1-minute Alpaca bars over the hold period and
+        overwrite max_favorable_excursion_pct / max_adverse_excursion_pct with values
+        derived from bar highs and lows. Observation-only — swallows all exceptions.
+
+        Values stored as fractions (0.015 = 1.5%) matching the gain_pct convention
+        used throughout the codebase. MFE >= 0 (favorable), MAE <= 0 in normal cases.
+        """
+        try:
+            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    'SELECT ticker, trade_type, entry_price, entry_time, exit_time '
+                    'FROM trades WHERE trade_id=%s',
+                    (trade_id,)
+                )
+                row = cur.fetchone()
+
+            if not row or not row['entry_price'] or not row['entry_time'] or not row['exit_time']:
+                return
+
+            ticker      = row['ticker']
+            trade_type  = (row['trade_type'] or 'buy').lower()
+            entry_price = float(row['entry_price'])
+
+            # Naive ISO strings on Railway are UTC; attach tzinfo so Alpaca accepts them
+            entry_dt = datetime.fromisoformat(row['entry_time'])
+            exit_dt  = datetime.fromisoformat(row['exit_time'])
+            if entry_dt.tzinfo is None:
+                entry_dt = entry_dt.replace(tzinfo=timezone.utc)
+            if exit_dt.tzinfo is None:
+                exit_dt = exit_dt.replace(tzinfo=timezone.utc)
+
+            # Fetch 1-minute bars with a 2-minute buffer so partial edge bars are included
+            try:
+                from alpaca.data.historical import StockHistoricalDataClient
+                from alpaca.data.requests import StockBarsRequest
+                from alpaca.data.timeframe import TimeFrame
+                _alpaca = StockHistoricalDataClient(
+                    api_key=config.alpaca_api_key,
+                    secret_key=config.alpaca_secret_key,
+                )
+                bars = _alpaca.get_stock_bars(StockBarsRequest(
+                    symbol_or_symbols=ticker,
+                    timeframe=TimeFrame.Minute,
+                    start=entry_dt - timedelta(minutes=2),
+                    end=exit_dt   + timedelta(minutes=2),
+                ))
+                df = bars.df.reset_index()
+            except Exception as bar_exc:
+                log_error('excursion_bar_fetch', ticker, str(bar_exc))
+                return
+
+            if df.empty:
+                return
+
+            # Align timestamps to UTC then filter to the hold window (±1 min buffer)
+            ts = df['timestamp']
+            if hasattr(ts.dt, 'tz') and ts.dt.tz is None:
+                ts = ts.dt.tz_localize('UTC')
+            df = df.assign(timestamp_utc=ts)
+            mask = (
+                (df['timestamp_utc'] >= entry_dt - timedelta(minutes=1)) &
+                (df['timestamp_utc'] <= exit_dt   + timedelta(minutes=1))
+            )
+            df = df[mask]
+            if df.empty:
+                return
+
+            max_high = float(df['high'].max())
+            min_low  = float(df['low'].min())
+            is_long  = trade_type in ('buy', 'long')
+
+            if is_long:
+                mfe = (max_high - entry_price) / entry_price
+                mae = (min_low  - entry_price) / entry_price
+            else:
+                mfe = (entry_price - min_low)  / entry_price
+                mae = (entry_price - max_high) / entry_price
+
+            mfe = max(mfe, 0.0)   # favorable excursion is always non-negative
+            mae = min(mae, 0.0)   # adverse excursion is always non-positive
+
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    'UPDATE trades SET max_favorable_excursion_bar_pct=%s, '
+                    'max_adverse_excursion_bar_pct=%s WHERE trade_id=%s',
+                    (mfe, mae, trade_id),
+                )
+            self.conn.commit()
+
+        except Exception as exc:
+            try:
+                log_error('compute_excursion', trade_id, str(exc))
+            except Exception:
+                pass
 
     def get_last_closed_trade(self, ticker: str) -> dict | None:
         """
