@@ -21,7 +21,7 @@ Usage:
 """
 
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import (
     MarketOrderRequest, LimitOrderRequest,
@@ -397,6 +397,34 @@ class TradeExecutor:
                     )
                 except Exception as e:
                     log_error('close_stale_intraday_positions', ticker, str(e))
+                continue
+
+            # Guard: never close a position opened on today's trading date.
+            # Protects against mid-day restarts re-triggering this cleanup.
+            from zoneinfo import ZoneInfo
+            _et_tz = ZoneInfo('America/New_York')
+            _today_et = datetime.now(_et_tz).date()
+
+            _entry_time_str = trade.get('entry_time')
+            if not _entry_time_str:
+                print(f'⚠️  Cleanup: {ticker} has no matching open trade record — leaving for manual review')
+                continue
+
+            _entry_date_et = None
+            try:
+                _entry_dt = datetime.fromisoformat(_entry_time_str)
+                if _entry_dt.tzinfo is None:
+                    _entry_dt = _entry_dt.replace(tzinfo=timezone.utc)
+                _entry_date_et = _entry_dt.astimezone(_et_tz).date()
+            except Exception:
+                pass
+
+            if _entry_date_et is None:
+                print(f'⚠️  Cleanup: {ticker} has no matching open trade record — leaving for manual review')
+                continue
+
+            if _entry_date_et == _today_et:
+                print(f'🟡 Cleanup: {ticker} opened today ({_entry_time_str}) — not stale, skipping')
                 continue
 
             print(f'⚠️  Stale intraday position found at market open: {ticker} — closing now')
