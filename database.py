@@ -18,11 +18,83 @@ Usage:
 """
 
 import os
+import time
+import functools
 import psycopg2
 import psycopg2.extras
 from datetime import datetime, timedelta, timezone
 from config import config
 from logger import log_error
+
+
+# ── Resilience config ──────────────────────────────────────────────────────────
+# connect_timeout=10          : abort if the TCP handshake / auth takes > 10 s
+# keepalives*                 : OS-level TCP probes detect a silently-dead peer in
+#                               ~80 s (idle=30 + interval=10 × count=5) rather than
+#                               waiting for the OS default (hours)
+# statement_timeout=30 000 ms : any query still running after 30 s is aborted by
+#                               the server — prevents the scheduler main thread from
+#                               hanging indefinitely on a half-dead connection
+# idle_in_transaction=60 000  : a transaction left open with no new queries for
+#                               > 60 s is rolled back automatically — cleans up the
+#                               known read-transaction leak without an app-side fix;
+#                               safe because normal inter-query pauses are < 1 s
+_CONN_KWARGS = dict(
+    connect_timeout=10,
+    keepalives=1,
+    keepalives_idle=30,
+    keepalives_interval=10,
+    keepalives_count=5,
+    options='-c statement_timeout=30000 -c idle_in_transaction_session_timeout=60000',
+)
+
+_RETRY_DELAYS = (1, 2, 4)   # seconds between reconnect attempts (3 retries total)
+
+
+def _db_retry(method):
+    """
+    Wrap a Database public method with reconnect-and-retry on connection errors.
+
+    Trigger: psycopg2.OperationalError or InterfaceError — covers:
+      - "SSL connection has been closed unexpectedly"
+      - "connection already closed"
+      - any TCP-level failure detected mid-query
+
+    Policy: up to 3 retries after the initial attempt, with 1 s / 2 s / 4 s
+    backoff. On each retry the stale connection is closed and a fresh one is
+    opened. If all four attempts fail the last exception is re-raised to the
+    caller — it must NOT be swallowed here.
+
+    Non-connection errors (IntegrityError, ProgrammingError, …) are not caught
+    and propagate immediately without retry.
+    """
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        delays = (0,) + _RETRY_DELAYS   # attempt 0 = no sleep, then 1/2/4 s
+        last_exc = None
+        for attempt, delay in enumerate(delays):
+            if delay:
+                time.sleep(delay)
+            try:
+                if self.conn.closed:
+                    self._reconnect()
+                return method(self, *args, **kwargs)
+            except (psycopg2.OperationalError, psycopg2.InterfaceError) as exc:
+                last_exc = exc
+                if attempt == len(delays) - 1:
+                    raise
+                log_error('db_retry', method.__name__,
+                          f'attempt {attempt + 1}/{len(delays) - 1}: {exc}')
+                try:
+                    self.conn.close()
+                except Exception:
+                    pass
+                try:
+                    self._reconnect()
+                except Exception:
+                    pass   # next iteration re-checks conn.closed and retries
+        raise last_exc     # unreachable; satisfies type checkers
+    return wrapper
 
 
 class Database:
@@ -35,10 +107,28 @@ class Database:
         database_url = os.getenv('DATABASE_URL', '')
         if not database_url:
             raise RuntimeError('DATABASE_URL environment variable is not set')
-
-        self.conn = psycopg2.connect(database_url)
-        self.conn.autocommit = False
+        self._db_url = database_url
+        self.conn = self._make_connection()
         self._create_tables()
+
+    def _make_connection(self):
+        """Open a fresh psycopg2 connection with all resilience params set."""
+        conn = psycopg2.connect(self._db_url, **_CONN_KWARGS)
+        conn.autocommit = False
+        return conn
+
+    def _reconnect(self):
+        """
+        Close the stale connection and open a new one.
+        Only replaces self.conn on success so callers can re-check conn.closed
+        if this raises.
+        """
+        try:
+            self.conn.close()
+        except Exception:
+            pass
+        new_conn = self._make_connection()   # raises OperationalError if unreachable
+        self.conn = new_conn                 # assign only after successful connect
 
     # ── Schema ────────────────────────────────────────────────────────────────
 
@@ -346,6 +436,7 @@ class Database:
 
     # ── Write Operations ──────────────────────────────────────────────────────
 
+    @_db_retry
     def insert_trade(self, trade: dict):
         """
         Insert a new trade record or update an existing one with the same trade_id.
@@ -370,6 +461,7 @@ class Database:
             cur.execute(sql, list(trade.values()))
         self.conn.commit()
 
+    @_db_retry
     def update_trade_status(self, trade_id, status, exit_reason=None, exit_price=None, exit_time_override=None):
         """
         Record the outcome of a closed trade.
@@ -416,6 +508,7 @@ class Database:
         if status == 'closed':
             self.compute_and_store_excursion(trade_id)
 
+    @_db_retry
     def upgrade_trade_to_swing(self, trade_id):
         """
         Upgrade an intraday trade to a swing trade in place of force-closing it.
@@ -434,6 +527,7 @@ class Database:
 
     # ── Read Operations ───────────────────────────────────────────────────────
 
+    @_db_retry
     def get_all_trades(self) -> list:
         """
         Return all trades ordered by entry time descending (most recent first).
@@ -443,6 +537,7 @@ class Database:
             cur.execute('SELECT * FROM trades ORDER BY entry_time DESC')
             return [dict(row) for row in cur.fetchall()]
 
+    @_db_retry
     def get_open_trades(self) -> list:
         """
         Return all currently open positions.
@@ -452,6 +547,7 @@ class Database:
             cur.execute("SELECT * FROM trades WHERE status='open'")
             return [dict(row) for row in cur.fetchall()]
 
+    @_db_retry
     def get_losing_gap_fade_tickers_today(self) -> dict:
         """
         Return tickers where a gap_fade trade closed at a loss today (ET).
@@ -491,6 +587,7 @@ class Database:
             }
         return result
 
+    @_db_retry
     def update_entry_price(self, trade_id: str, entry_price: float):
         """
         Patch the entry_price on an open trade record.
@@ -504,6 +601,7 @@ class Database:
             )
         self.conn.commit()
 
+    @_db_retry
     def update_mfe_mae(self, trade_id: str, mfe_pct: 'float | None', mae_pct: 'float | None'):
         """
         Persist the current max favorable and max adverse excursion percentages
@@ -517,6 +615,7 @@ class Database:
             )
         self.conn.commit()
 
+    @_db_retry
     def compute_and_store_excursion(self, trade_id: str):
         """
         After a trade closes, fetch 1-minute Alpaca bars over the hold period and
@@ -614,6 +713,7 @@ class Database:
             except Exception:
                 pass
 
+    @_db_retry
     def get_last_closed_trade(self, ticker: str) -> dict | None:
         """
         Return the most recent closed trade for a ticker today, or None if none exists.
@@ -635,6 +735,7 @@ class Database:
             row = cur.fetchone()
             return dict(row) if row else None
 
+    @_db_retry
     def get_recent_closed_trade_by_direction(
         self, ticker: str, trade_type: str, minutes: int = 10
     ) -> dict | None:
@@ -669,6 +770,7 @@ class Database:
             row = cur.fetchone()
             return dict(row) if row else None
 
+    @_db_retry
     def get_performance_by_hold_period(self) -> dict:
         """
         Aggregate closed trade statistics broken out by hold period tier.
@@ -689,6 +791,7 @@ class Database:
             }
         return result
 
+    @_db_retry
     def get_performance_metrics(self) -> dict:
         """
         Return overall aggregate performance stats across all closed trades.
@@ -715,6 +818,7 @@ class Database:
             'profit_factor': (gross_win / gross_loss) if gross_loss > 0 else 0,
         }
 
+    @_db_retry
     def get_circuit_breaker_peak(self):
         """
         Return the stored portfolio peak value, or None if not yet set.
@@ -725,6 +829,7 @@ class Database:
             row = cur.fetchone()
         return row[0] if row else None
 
+    @_db_retry
     def set_circuit_breaker_peak(self, peak_value: float):
         """
         Upsert the portfolio peak value so it survives service restarts/redeploys.
@@ -738,6 +843,7 @@ class Database:
             )
         self.conn.commit()
 
+    @_db_retry
     def save_daily_performance(self, portfolio_value: float):
         """
         Insert or update today's daily performance snapshot.
@@ -830,6 +936,7 @@ class Database:
             )
         self.conn.commit()
 
+    @_db_retry
     def get_daily_performance(self) -> list:
         """
         Return all daily performance snapshots ordered by date descending.
