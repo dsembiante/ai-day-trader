@@ -29,7 +29,7 @@ from alpaca.trading.requests import (
     GetOrdersRequest,
 )
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderType, QueryOrderStatus
-from config import config
+from config import config, TP_PCT_MID
 from logger import log_error
 from models import TradeDecision
 import time
@@ -161,14 +161,14 @@ class TradeExecutor:
                         decision.stop_loss_price = round(decision.entry_price * (1 - config.long_stop_loss_pct), 2)
                     if decision.take_profit_price and decision.take_profit_price <= decision.entry_price:
                         print(f'[executor] {decision.ticker} — invalid take profit below entry, recalculating')
-                        decision.take_profit_price = round(decision.entry_price * (1 + config.intraday_take_profit_pct), 2)
+                        decision.take_profit_price = round(decision.entry_price * (1 + TP_PCT_MID), 2)
                 else:  # short
                     if decision.stop_loss_price and decision.stop_loss_price <= decision.entry_price:
                         print(f'[executor] {decision.ticker} — invalid stop loss below entry for short, recalculating')
                         decision.stop_loss_price = round(decision.entry_price * (1 + config.intraday_stop_loss_pct), 2)
                     if decision.take_profit_price and decision.take_profit_price >= decision.entry_price:
                         print(f'[executor] {decision.ticker} — invalid take profit above entry for short, recalculating')
-                        decision.take_profit_price = round(decision.entry_price * (1 - config.intraday_take_profit_pct), 2)
+                        decision.take_profit_price = round(decision.entry_price * (1 - TP_PCT_MID), 2)
 
             # ── Price rounding ────────────────────────────────────────────────
             # Alpaca rejects prices with more than 2 decimal places (sub-penny

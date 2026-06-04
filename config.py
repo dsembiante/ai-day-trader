@@ -157,3 +157,31 @@ class Config(BaseModel):
 # Import this object throughout the codebase rather than instantiating Config
 # directly, ensuring all modules share the same validated configuration.
 config = Config()
+
+
+# ── Volatility-tiered take-profit constants ───────────────────────────────────
+# The high-vol gate is 4.0% ATR (defined in crew.py); callers evaluate that and
+# pass is_high_vol=True/False.  TP_TIER_SPLIT_ATR_PCT is the tier-1/tier-2 split.
+#
+# Tier 1  ATR >= 6.0%                        → 0.50%
+# Tier 2  high-vol gated (ATR >= 4.0%) < 6%  → 0.40%
+# Tier 3  standard (ATR < 4.0%)              → 0.30%
+TP_TIER_SPLIT_ATR_PCT = 6.0   # ATR % above which tier-1 fires
+TP_PCT_HIGH = 0.0050           # tier 1
+TP_PCT_MID  = 0.0040           # tier 2
+TP_PCT_LOW  = 0.0030           # tier 3
+
+
+def get_take_profit_pct(atr_pct: float, is_high_vol: bool) -> float:
+    """Return the volatility-tiered take-profit fraction for a new bracket order."""
+    if atr_pct >= TP_TIER_SPLIT_ATR_PCT:
+        return TP_PCT_HIGH
+    if is_high_vol:
+        return TP_PCT_MID
+    return TP_PCT_LOW
+
+
+def is_long_side(direction) -> bool:
+    """True for long/buy trades. Accepts a TradeType enum or a plain string."""
+    val = getattr(direction, 'value', direction)
+    return str(val).lower() in ('buy', 'long')

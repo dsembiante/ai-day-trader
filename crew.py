@@ -39,7 +39,7 @@ from trade_executor import TradeExecutor
 from circuit_breaker import CircuitBreaker
 from database import Database
 from logger import log_error, log_trade, new_run_log, log_run
-from config import config, HoldPeriod
+from config import config, HoldPeriod, get_take_profit_pct, TP_TIER_SPLIT_ATR_PCT, is_long_side
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 from macro_calendar import check_high_impact_day
@@ -197,7 +197,7 @@ def run_position_monitor_only():
 
 def run_gap_fade_ticker(
     ticker, market_data, db, executor, config,
-    et_now, market_regime, vix_regime, spy_intraday_chg=None,
+    et_now, market_regime, vix_regime, spy_intraday_chg=None, is_high_vol=False,
 ):
     """Gap fade pipeline for a single ticker. Returns immediately if not qualified."""
     if market_data.gap_pct is None or abs(market_data.gap_pct) < config.gap_fade_min_gap_pct:
@@ -262,13 +262,16 @@ def run_gap_fade_ticker(
         market_data.current_price, trade_str, hold,
         atr_pct=market_data.atr_pct, ticker=ticker,
     )
-    take_profit = (
-        raw_dict.get('gap_fade_target')
-        or sizer.get_take_profit(
-            market_data.current_price, trade_str, hold,
-            atr_pct=market_data.atr_pct, ticker=ticker,
-        )
+    _atr_gf   = market_data.atr_pct or 0.0
+    _tp_pct_gf = get_take_profit_pct(_atr_gf, is_high_vol)
+    _entry_gf  = market_data.current_price
+    take_profit = round(
+        _entry_gf * (1 + _tp_pct_gf) if is_long_side(trade_str)
+        else _entry_gf * (1 - _tp_pct_gf),
+        2,
     )
+    _tier_gf = '1' if _atr_gf >= TP_TIER_SPLIT_ATR_PCT else '2' if is_high_vol else '3'
+    print(f'[tp_tier] {ticker} — ATR {_atr_gf:.1f}% -> tier {_tier_gf} -> TP {_tp_pct_gf*100:.2f}% (entry {_entry_gf:.2f}, target {take_profit:.2f})')
 
     decision = TradeDecision(
         ticker=ticker,
@@ -367,7 +370,7 @@ def run_gap_fade_ticker(
 
 def run_vwap_reversion_ticker(
     ticker, market_data, db, executor, config,
-    et_now, market_regime, vix_regime, spy_intraday_chg=None,
+    et_now, market_regime, vix_regime, spy_intraday_chg=None, is_high_vol=False,
 ):
     """VWAP reversion pipeline for a single ticker. Returns immediately if not qualified."""
     if not market_data.vwap or not market_data.current_price:
@@ -435,13 +438,16 @@ def run_vwap_reversion_ticker(
         market_data.current_price, trade_str, hold,
         atr_pct=market_data.atr_pct, ticker=ticker,
     )
-    take_profit = (
-        raw_dict.get('vwap_target')
-        or sizer.get_take_profit(
-            market_data.current_price, trade_str, hold,
-            atr_pct=market_data.atr_pct, ticker=ticker,
-        )
+    _atr_vr   = market_data.atr_pct or 0.0
+    _tp_pct_vr = get_take_profit_pct(_atr_vr, is_high_vol)
+    _entry_vr  = market_data.current_price
+    take_profit = round(
+        _entry_vr * (1 + _tp_pct_vr) if is_long_side(trade_str)
+        else _entry_vr * (1 - _tp_pct_vr),
+        2,
     )
+    _tier_vr = '1' if _atr_vr >= TP_TIER_SPLIT_ATR_PCT else '2' if is_high_vol else '3'
+    print(f'[tp_tier] {ticker} — ATR {_atr_vr:.1f}% -> tier {_tier_vr} -> TP {_tp_pct_vr*100:.2f}% (entry {_entry_vr:.2f}, target {take_profit:.2f})')
 
     decision = TradeDecision(
         ticker=ticker,
@@ -989,12 +995,14 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 gap_fade_traded = bool(run_gap_fade_ticker(
                     ticker, market_data, db, executor, config,
                     et_now, market_regime, vix_regime, spy_intraday_chg,
+                    is_high_vol=_is_high_vol,
                 ))
 
             if vwap_reversion_open:
                 run_vwap_reversion_ticker(
                     ticker, market_data, db, executor, config,
                     et_now, market_regime, vix_regime, spy_intraday_chg,
+                    is_high_vol=_is_high_vol,
                 )
 
             # ── Strategy Eligibility Log (Item 3) ────────────────────────────
@@ -1385,17 +1393,29 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                     market_data.current_price, decision.trade_type, hold,
                     atr_pct=market_data.atr_pct, ticker=ticker,
                 )
-                decision.take_profit_price  = sizer.get_take_profit(
-                    market_data.current_price, decision.trade_type, hold,
-                    atr_pct=market_data.atr_pct, ticker=ticker,
-                )
-                decision.max_hold_days      = sizer.get_max_hold_days(hold)
-
-                # Log whether ATR-based or fixed stops were applied
-                if sizer._last_atr_stop_pct is not None and sizer._last_atr_target_pct is not None:
-                    print(f'🎯 ATR-based stops: {ticker} — stop {sizer._last_atr_stop_pct*100:.1f}% / target {sizer._last_atr_target_pct*100:.1f}% (ATR: {market_data.atr_pct:.1f}%)')
+                if hold == HoldPeriod.INTRADAY:
+                    _atr_m    = market_data.atr_pct or 0.0
+                    _tp_pct_m = get_take_profit_pct(_atr_m, _is_high_vol)
+                    _entry_m  = market_data.current_price
+                    decision.take_profit_price = round(
+                        _entry_m * (1 + _tp_pct_m) if is_long_side(decision.trade_type)
+                        else _entry_m * (1 - _tp_pct_m),
+                        2,
+                    )
+                    _tier_m = '1' if _atr_m >= TP_TIER_SPLIT_ATR_PCT else '2' if _is_high_vol else '3'
+                    print(f'[tp_tier] {ticker} — ATR {_atr_m:.1f}% -> tier {_tier_m} -> TP {_tp_pct_m*100:.2f}% (entry {_entry_m:.2f}, target {decision.take_profit_price:.2f})')
                 else:
-                    print(f'⚠️  ATR unavailable for {ticker} — using fixed stops')
+                    decision.take_profit_price = sizer.get_take_profit(
+                        market_data.current_price, decision.trade_type, hold,
+                        atr_pct=market_data.atr_pct, ticker=ticker,
+                    )
+                decision.max_hold_days = sizer.get_max_hold_days(hold)
+
+                # Log ATR-based stop (TP logged by [tp_tier] above for intraday)
+                if sizer._last_atr_stop_pct is not None:
+                    print(f'🎯 ATR-based stop: {ticker} — stop {sizer._last_atr_stop_pct*100:.1f}% (ATR: {market_data.atr_pct:.1f}%)')
+                else:
+                    print(f'⚠️  ATR unavailable for {ticker} — using fixed stop')
 
                 # ORB gate — block ALL new entries before 9:45 AM ET regardless
                 # of trade_type. The Risk Manager prompt states this rule but the
