@@ -165,6 +165,22 @@ def pre_close_run():
     monitor.close_all_intraday()
 
 
+def morning_close():
+    """
+    11:00 AM hard close — force-close all open positions as the entry window ends.
+
+    Reuses the same close_all_intraday() path as the afternoon EOD close so
+    there is exactly one closing code path. The afternoon EOD close at 15:45/15:50
+    is intentionally left in place as a backstop: if a position survives the
+    11:00 close (e.g. a cancel/close race), the EOD close catches it.
+    The 1-minute position monitor is also left running after 11:00 as an
+    additional backstop for any orphaned positions.
+    """
+    from trade_executor import TradeExecutor
+    monitor = PositionMonitor(TradeExecutor())
+    monitor.close_all_intraday()
+
+
 def run_monitor_check():
     """
     1-minute lightweight position exit check — no entry evaluation, no Groq calls.
@@ -293,6 +309,13 @@ elif config.run_mode == RunMode.INTRADAY_SMART:
     # 3:50 PM — final cycle + force-close all intraday positions
     schedule.every().day.at('15:50').do(pre_close_run)
     schedule.every().day.at('16:00').do(end_of_day)
+
+
+# ── 11:00 AM Morning Close (all run modes) ───────────────────────────────────
+# Hard close of all open positions as the entry window ends. Reuses the same
+# close_all_intraday() path as the EOD close at 15:45/15:50 — no new code path.
+# The EOD close and the 1-minute monitor both remain as backstops.
+schedule.every().day.at('11:00').do(morning_close)
 
 
 # ── 1-Minute Position Monitor (all run modes) ────────────────────────────────
