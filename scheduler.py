@@ -280,16 +280,14 @@ elif config.run_mode == RunMode.INTRADAY_10MIN:
 
 elif config.run_mode == RunMode.INTRADAY_SMART:
     # ORB-aware schedule — skips the opening range formation window entirely:
-    #   9:30 AM – 9:45 AM  : NO trading (wait for opening range to form)
-    #   9:45 AM – 11:00 AM : every 5 minutes  (first hour after ORB confirmation)
+    #   9:30 AM – 10:00 AM : NO trading (wait for opening range to form)
+    #   10:00 AM – 11:00 AM: every 5 minutes  (first hour after ORB confirmation)
     #   11:00 AM – 2:30 PM : every 15 minutes (quiet mid-day)
     #   2:30 PM – 3:50 PM  : every 5 minutes  (closing volatility window)
     #   3:50 PM            : force-close all intraday positions
-    print('Starting in SMART INTRADAY mode (Entries: 9:45AM-12:00PM CT only | Position monitoring: 9:00AM-2:50PM CT | EOD close: 2:50PM CT)')
+    print('Starting in SMART INTRADAY mode (Entries: 10:00AM-11:00AM ET only | Position monitoring: 9:30AM-3:45PM ET | EOD close: 3:50PM ET)')
 
-    # 9:45 AM – 10:55 AM every 5 minutes
-    for minute in range(45, 60, 5):
-        schedule.every().day.at(f'09:{minute:02d}').do(run_cycle)
+    # 10:00 AM – 10:55 AM every 5 minutes
     for minute in range(0, 60, 5):
         schedule.every().day.at(f'10:{minute:02d}').do(run_cycle)
 
