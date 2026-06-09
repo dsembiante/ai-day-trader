@@ -249,15 +249,14 @@ elif config.run_mode == RunMode.INTRADAY_30MIN:
 
 elif config.run_mode == RunMode.INTRADAY_10MIN:
     # Smart intraday schedule — high frequency at open and close, reduced mid-day:
-    #   9:30 AM – 10:30 AM : every 5 minutes  (volatile open window)
+    #   9:30 AM – 10:00 AM : NO cycles (ORB formation window)
+    #   10:00 AM – 10:25 AM: every 5 minutes  (first entry window after ORB)
     #   10:30 AM – 3:00 PM : every 15 minutes (quieter mid-day)
     #   3:00 PM – 3:50 PM  : every 5 minutes  (pre-close momentum window)
     #   3:50 PM            : force-close all intraday positions
-    print('Starting in SMART INTRADAY mode (Entries: 9:00AM-12:00PM CT only | Position monitoring: 9:00AM-2:50PM CT | EOD close: 2:50PM CT)')
+    print('Starting in SMART INTRADAY mode (Entries: 10:00AM-11:00AM ET only | Position monitoring: 9:30AM-3:45PM ET | EOD close: 3:50PM ET)')
 
-    # 9:30 AM – 10:25 AM every 5 minutes
-    for minute in range(30, 60, 5):
-        schedule.every().day.at(f'09:{minute:02d}').do(run_cycle)
+    # 10:00 AM – 10:25 AM every 5 minutes
     for minute in range(0, 26, 5):
         schedule.every().day.at(f'10:{minute:02d}').do(run_cycle)
 
