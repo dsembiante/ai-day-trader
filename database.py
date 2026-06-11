@@ -535,7 +535,9 @@ class Database:
         """
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute('SELECT * FROM trades ORDER BY entry_time DESC')
-            return [dict(row) for row in cur.fetchall()]
+            rows = cur.fetchall()
+        self.conn.rollback()
+        return [dict(row) for row in rows]
 
     @_db_retry
     def get_open_trades(self) -> list:
@@ -545,7 +547,9 @@ class Database:
         """
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("SELECT * FROM trades WHERE status='open'")
-            return [dict(row) for row in cur.fetchall()]
+            rows = cur.fetchall()
+        self.conn.rollback()
+        return [dict(row) for row in rows]
 
     @_db_retry
     def get_losing_gap_fade_tickers_today(self) -> dict:
@@ -571,6 +575,7 @@ class Database:
             """, (f'{today_prefix}T00:00:00',))
             rows = cur.fetchall()
 
+        self.conn.rollback()
         result = {}
         for row in rows:
             ticker = row['ticker']
@@ -633,6 +638,10 @@ class Database:
                     (trade_id,)
                 )
                 row = cur.fetchone()
+            # End the SELECT transaction before the Alpaca bar fetch — that call
+            # can take 30–60 s and would otherwise idle the transaction past the
+            # server's idle_in_transaction_session_timeout, killing the connection.
+            self.conn.rollback()
 
             if not row or not row['entry_price'] or not row['entry_time'] or not row['exit_time']:
                 return
@@ -733,7 +742,8 @@ class Database:
                 (ticker, today),
             )
             row = cur.fetchone()
-            return dict(row) if row else None
+        self.conn.rollback()
+        return dict(row) if row else None
 
     @_db_retry
     def get_recent_closed_trade_by_direction(
@@ -768,7 +778,8 @@ class Database:
                 (ticker, list(direction_types), cutoff),
             )
             row = cur.fetchone()
-            return dict(row) if row else None
+        self.conn.rollback()
+        return dict(row) if row else None
 
     @_db_retry
     def get_performance_by_hold_period(self) -> dict:
@@ -789,6 +800,7 @@ class Database:
                 'total_pnl': row[1] or 0,
                 'avg_pnl': row[2] or 0,
             }
+        self.conn.rollback()
         return result
 
     @_db_retry
@@ -807,6 +819,7 @@ class Database:
                 "FROM trades WHERE status='closed'"
             )
             row = cur.fetchone()
+        self.conn.rollback()
         total      = row[0] or 0
         gross_win  = row[4] or 0
         gross_loss = row[5] or 0
@@ -827,6 +840,7 @@ class Database:
         with self.conn.cursor() as cur:
             cur.execute('SELECT peak_value FROM circuit_breaker_state WHERE id = 1')
             row = cur.fetchone()
+        self.conn.rollback()
         return row[0] if row else None
 
     @_db_retry
@@ -944,4 +958,6 @@ class Database:
         """
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute('SELECT * FROM daily_performance ORDER BY date DESC')
-            return [dict(row) for row in cur.fetchall()]
+            rows = cur.fetchall()
+        self.conn.rollback()
+        return [dict(row) for row in rows]
