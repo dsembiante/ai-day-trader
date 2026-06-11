@@ -28,6 +28,7 @@ import argparse
 import psycopg2
 import psycopg2.extras
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -105,9 +106,10 @@ if not trades:
 print()
 
 UTC = timezone.utc
+ET  = ZoneInfo('America/New_York')
 
 # ── Counters ──────────────────────────────────────────────────────────────────
-n_processed = n_updated = n_skipped = 0
+n_processed = n_updated = n_skipped = n_mfe_zero = 0
 skip_reasons: dict[str, int] = {}
 
 def _record_skip(reason: str) -> None:
@@ -134,11 +136,13 @@ for i, trade in enumerate(trades, 1):
         _record_skip('time_parse_error')
         continue
 
-    # Naive ISO strings on Railway are UTC; attach tzinfo so Alpaca accepts them
+    # Naive strings are Eastern-naive (Railway container TZ = America/New_York;
+    # datetime.now() returns ET wall-clock without tzinfo). Convert to UTC.
+    # Aware strings (e.g. +00:00 from order.filled_at) are left as-is.
     if entry_dt.tzinfo is None:
-        entry_dt = entry_dt.replace(tzinfo=UTC)
+        entry_dt = entry_dt.replace(tzinfo=ET).astimezone(UTC)
     if exit_dt.tzinfo is None:
-        exit_dt = exit_dt.replace(tzinfo=UTC)
+        exit_dt = exit_dt.replace(tzinfo=ET).astimezone(UTC)
 
     if exit_dt <= entry_dt:
         print(f'  {pfx} SKIP — exit_time ({exit_dt}) not after entry_time ({entry_dt})')
@@ -187,6 +191,23 @@ for i, trade in enumerate(trades, 1):
         _record_skip('no_bars_in_window')
         continue
 
+    # ── Price-anchor sanity check ─────────────────────────────────────────────
+    # The first bar's open should be within 1.5% of stored entry_price.
+    # A larger deviation means the window is still misaligned (wrong TZ
+    # assumption for this row) or data is stale (e.g. a split occurred after
+    # the trade and the historical bars were adjusted). Either way the computed
+    # MFE/MAE would be meaningless.
+    anchor_price = float(df.iloc[0]['open'])
+    anchor_dev   = abs(anchor_price - entry_price) / entry_price
+    if anchor_dev > 0.015:
+        print(
+            f'  {pfx} SKIP — price_anchor_mismatch '
+            f'(first bar open ${anchor_price:.2f} vs entry ${entry_price:.2f}, '
+            f'dev={anchor_dev * 100:.2f}%)'
+        )
+        _record_skip('price_anchor_mismatch')
+        continue
+
     # ── Compute MFE / MAE — identical to Database.compute_and_store_excursion() ──
     max_high = float(df['high'].max())
     min_low  = float(df['low'].min())
@@ -201,6 +222,8 @@ for i, trade in enumerate(trades, 1):
 
     mfe = max(mfe, 0.0)   # favorable excursion is always non-negative
     mae = min(mae, 0.0)   # adverse excursion is always non-positive
+    if mfe == 0.0:
+        n_mfe_zero += 1
 
     entry_str = entry_dt.strftime('%Y-%m-%d %H:%M')
     exit_str  = exit_dt.strftime('%H:%M')
@@ -250,6 +273,11 @@ print(f'  Skipped         : {n_skipped}')
 if skip_reasons:
     for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
         print(f'    {reason}: {count}')
+_mfe_zero_warn = (
+    '  ← WARNING: >70% zero MFEs — bar window may still be misaligned'
+    if n_updated > 0 and n_mfe_zero / n_updated > 0.70 else ''
+)
+print(f'  MFE = 0.0       : {n_mfe_zero}{_mfe_zero_warn}')
 if DRY_RUN and n_updated > 0:
     print()
     print('  Re-run with --execute to write changes to the database.')
