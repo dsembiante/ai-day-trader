@@ -23,6 +23,7 @@ import functools
 import psycopg2
 import psycopg2.extras
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from config import config
 from logger import log_error
 
@@ -650,13 +651,19 @@ class Database:
             trade_type  = (row['trade_type'] or 'buy').lower()
             entry_price = float(row['entry_price'])
 
-            # Naive ISO strings on Railway are UTC; attach tzinfo so Alpaca accepts them
+            # Naive strings are Eastern-naive: the Railway container runs with
+            # TZ=America/New_York so datetime.now() returns ET wall-clock time
+            # without tzinfo. Use replace(tzinfo=ET) not replace(tzinfo=UTC) to
+            # avoid shifting the bar window ~4–5 h into pre-market. Aware strings
+            # (e.g. +00:00 from order.filled_at via exit_time_override) are left
+            # unchanged by the tzinfo-is-None guard.
             entry_dt = datetime.fromisoformat(row['entry_time'])
             exit_dt  = datetime.fromisoformat(row['exit_time'])
+            _ET = ZoneInfo('America/New_York')
             if entry_dt.tzinfo is None:
-                entry_dt = entry_dt.replace(tzinfo=timezone.utc)
+                entry_dt = entry_dt.replace(tzinfo=_ET).astimezone(timezone.utc)
             if exit_dt.tzinfo is None:
-                exit_dt = exit_dt.replace(tzinfo=timezone.utc)
+                exit_dt = exit_dt.replace(tzinfo=_ET).astimezone(timezone.utc)
 
             # Fetch 1-minute bars with a 2-minute buffer so partial edge bars are included
             try:

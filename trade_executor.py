@@ -413,6 +413,7 @@ class TradeExecutor:
             _entry_date_et = None
             try:
                 _entry_dt = datetime.fromisoformat(_entry_time_str)
+                # NOTE: naive is ET not UTC; replace(utc) is wrong but .astimezone(_et_tz) below cancels the error. Fix to replace(tzinfo=_et_tz) when next touching this block.
                 if _entry_dt.tzinfo is None:
                     _entry_dt = _entry_dt.replace(tzinfo=timezone.utc)
                 _entry_date_et = _entry_dt.astimezone(_et_tz).date()
