@@ -24,3 +24,16 @@ wall-clock time** — not UTC. The Railway container runs with
 **Known locations with the wrong UTC assumption (not yet fixed):**
 - `mfe_reconstruction.py:107-109` — bar-fetch window is ~4–5 h off for older trades
 - `backfill_trades.py:44-45` — `_to_utc()` helper; low impact (relative ordering only)
+
+## Strategy configuration
+
+As of 2026-06-12 the system runs in **gap-fade specialist mode**: momentum is
+disabled by config, vwap reversion remains off.
+
+- To re-enable momentum: set `MOMENTUM_ENABLED=true` in `.env` or Railway env vars.
+- To re-enable VWAP reversion: set `config.vwap_reversion_enabled = True` in `config.py`
+  (no env var backing currently).
+
+Historical and any still-open momentum trades in the DB are fully
+readable/processable — exit logic is strategy-agnostic and is not affected by
+this flag.

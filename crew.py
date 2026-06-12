@@ -624,14 +624,16 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
     # Each strategy has its own active window. The per-ticker loop runs as long
     # as at least one strategy has an open window; the momentum pipeline gets a
     # continue gate inside the loop when its own window has closed.
-    momentum_entries_open = et_now.time() < time(11, 0)
+    momentum_entries_open = config.momentum_enabled and et_now.time() < time(11, 0)
     gap_fade_entries_open = et_now.time() < time(10, 45)
     vwap_reversion_open   = (
         config.vwap_reversion_enabled and
         time(12, 0) <= et_now.time() <= time(14, 30)
     )
+    if not config.momentum_enabled:
+        print('momentum strategy disabled — gap-fade specialist mode')
 
-    if not momentum_entries_open and not vwap_reversion_open:
+    if not gap_fade_entries_open and not momentum_entries_open and not vwap_reversion_open:
         if et_now.time() < time(12, 0):
             print(f'⛔ Past 11:00 AM ET — entries closed, monitoring positions only')
         log_run(run_log)
@@ -1019,7 +1021,8 @@ def run_trading_cycle(circuit_breaker: CircuitBreaker):
                 else 'evaluated'
             )
             _momentum_status = (
-                'skipped(window_closed)'   if not momentum_entries_open
+                'disabled'                      if not config.momentum_enabled
+                else 'skipped(window_closed)'   if not momentum_entries_open
                 else 'skipped(gap_fade_traded)' if gap_fade_traded
                 else 'eligible'
             )
