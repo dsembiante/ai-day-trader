@@ -138,12 +138,25 @@ class Config(BaseModel):
     vwap_reversion_window_end: str = "14:30"    # ET time to stop VWAP reversion
 
     # ── Watchlist ─────────────────────────────────────────────────────────────
-    # Symbols scanned on every agent cycle. Mix of mega-cap tech, financials,
-    # and broad market ETFs for diversified signal generation.
+    # Symbols scanned on every agent cycle. 33 names across diverse sectors to
+    # maximise gap-fade opportunities without correlated tech-only exposure.
     watchlist: list = [
+        # Tech (original)
         'AAPL', 'AMD', 'AMZN', 'AVGO', 'GOOGL',
         'META', 'MSFT', 'MU', 'NFLX', 'NVDA',
         'PLTR', 'QCOM', 'SMCI', 'TSLA', 'UBER',
+        # Tech additions
+        'INTC', 'CRM', 'ORCL',
+        # Financials
+        'JPM', 'BAC', 'GS', 'MS',
+        # Healthcare
+        'UNH', 'JNJ', 'ABBV',
+        # Consumer
+        'WMT', 'COST', 'HD', 'MCD', 'DIS',
+        # Energy
+        'XOM', 'CVX',
+        # Industrials
+        'CAT',
     ]
 
     # ── File Paths ────────────────────────────────────────────────────────────
